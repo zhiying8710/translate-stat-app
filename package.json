@@ -6,11 +6,14 @@
   "main": "src/server.js",
   "type": "commonjs",
   "engines": {
-    "node": ">=22.0.0"
+    "node": "20.x || 22.x || 23.x || 24.x || 25.x"
   },
   "scripts": {
     "start": "node --no-warnings src/server.js",
     "dev": "node --watch --no-warnings src/server.js",
     "test": "node --test --no-warnings"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
   }
 }

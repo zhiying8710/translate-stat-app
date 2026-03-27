@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+const { DatabaseSync } = require('./sqlite-driver');
 
 const {
   dateKeyFromTimestamp,

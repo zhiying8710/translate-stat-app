@@ -1,6 +1,6 @@
 # translate-stat-app
 
-一个零第三方依赖的 Node.js 统计服务：
+一个基于 Node.js 和 `better-sqlite3` 的统计服务：
 
 - `POST /api/events` 接收翻译统计数据并按天写入 SQLite
 - `GET /api/dashboard-data` 返回多维聚合结果
@@ -20,6 +20,7 @@ npm start
 
 ```bash
 cd /path/to/translate-stat-app
+npm install
 pm2 start ecosystem.config.js
 ```
 
