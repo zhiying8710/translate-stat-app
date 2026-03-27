@@ -214,10 +214,12 @@ class StatsStore {
 
   readRows(filters, range) {
     const rows = [];
-    const dateKeys = enumerateDateKeys(range.from, range.to);
     const { startTs, endTsExclusive } = getRangeTimestamps(range.from, range.to, this.timeZone);
 
-    for (const dateKey of dateKeys) {
+    // Query all retained daily databases and rely on ts bounds for correctness.
+    // This keeps range queries accurate even if some historical rows were written
+    // into an adjacent day's file because of older partitioning logic.
+    for (const dateKey of this.listDateKeys()) {
       const filePath = this.getDatabasePath(dateKey);
       if (!fs.existsSync(filePath)) {
         continue;

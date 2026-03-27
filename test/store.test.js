@@ -197,3 +197,31 @@ test('date range filters only include rows inside the selected local-day window'
 
   store.close();
 });
+
+test('date range filters still work when a row is stored in an adjacent daily db file', () => {
+  const { store } = createStore(3650);
+
+  const misplacedConnection = store.getConnection('2026-03-27');
+  misplacedConnection.insert.run(
+    'desktop-app',
+    'openai',
+    1,
+    88,
+    new Date('2026-03-28T00:10:00+08:00').getTime(),
+    '1.0.0',
+    'alice'
+  );
+
+  const dashboard = store.getDashboardData({
+    from: '2026-03-28',
+    to: '2026-03-28'
+  });
+
+  assert.equal(dashboard.summary.total, 1);
+  assert.deepEqual(
+    dashboard.daily.map((item) => ({ date: item.date, total: item.total })),
+    [{ date: '2026-03-28', total: 1 }]
+  );
+
+  store.close();
+});
