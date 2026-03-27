@@ -84,10 +84,35 @@ function resolveDateRange({ from, to, timeZone, retentionDays, now = Date.now() 
   };
 }
 
+function getRangeTimestamps(from, to, timeZone) {
+  return {
+    startTs: findStartOfDateKey(from, timeZone),
+    endTsExclusive: findStartOfDateKey(shiftDateKey(to, 1), timeZone)
+  };
+}
+
+function findStartOfDateKey(targetDateKey, timeZone) {
+  const base = parseDateKey(targetDateKey).getTime();
+  let low = base - (36 * 60 * 60 * 1000);
+  let high = base + (36 * 60 * 60 * 1000);
+
+  while (low < high) {
+    const mid = low + Math.floor((high - low) / 2);
+    if (dateKeyFromTimestamp(mid, timeZone) < targetDateKey) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+
+  return low;
+}
+
 module.exports = {
   dateKeyFromTimestamp,
   enumerateDateKeys,
   formatDateKey,
+  getRangeTimestamps,
   isValidDateKey,
   resolveDateRange,
   shiftDateKey

@@ -5,6 +5,7 @@ const { DatabaseSync } = require('./sqlite-driver');
 const {
   dateKeyFromTimestamp,
   enumerateDateKeys,
+  getRangeTimestamps,
   resolveDateRange,
   shiftDateKey
 } = require('./date-utils');
@@ -214,6 +215,7 @@ class StatsStore {
   readRows(filters, range) {
     const rows = [];
     const dateKeys = enumerateDateKeys(range.from, range.to);
+    const { startTs, endTsExclusive } = getRangeTimestamps(range.from, range.to, this.timeZone);
 
     for (const dateKey of dateKeys) {
       const filePath = this.getDatabasePath(dateKey);
@@ -222,7 +224,10 @@ class StatsStore {
       }
 
       const connection = this.getConnection(dateKey);
-      const { whereClause, params } = buildWhereClause(filters);
+      const { whereClause, params } = buildWhereClause(filters, {
+        startTs,
+        endTsExclusive
+      });
       const statement = connection.db.prepare(`
         SELECT
           app,
@@ -436,9 +441,9 @@ function isNatApp(app) {
   return String(app).trim().toLowerCase() === 'nat';
 }
 
-function buildWhereClause(filters) {
-  const clauses = [];
-  const params = [];
+function buildWhereClause(filters, rangeFilter = {}) {
+  const clauses = ['ts >= ?', 'ts < ?'];
+  const params = [rangeFilter.startTs, rangeFilter.endTsExclusive];
 
   if (filters.app) {
     clauses.push('app = ?');
@@ -466,7 +471,7 @@ function buildWhereClause(filters) {
   }
 
   return {
-    whereClause: clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '',
+    whereClause: `WHERE ${clauses.join(' AND ')}`,
     params
   };
 }

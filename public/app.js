@@ -438,6 +438,7 @@ async function fetchJson(url, { timeoutMs = 15000 } = {}) {
 
   try {
     const response = await fetch(url, {
+      cache: 'no-store',
       signal: controller.signal
     });
 

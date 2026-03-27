@@ -139,3 +139,61 @@ test('cleanupOldDatabases deletes files older than retention window', () => {
 
   store.close();
 });
+
+test('date range filters only include rows inside the selected local-day window', () => {
+  const { store } = createStore(3650);
+
+  store.insertEvents({
+    events: [
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 50,
+        ts: '2026-03-24T23:59:59+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 60,
+        ts: '2026-03-25T00:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 70,
+        ts: '2026-03-25T23:59:59+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 80,
+        ts: '2026-03-26T00:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      }
+    ]
+  });
+
+  const dashboard = store.getDashboardData({
+    from: '2026-03-25',
+    to: '2026-03-25'
+  });
+
+  assert.equal(dashboard.summary.total, 2);
+  assert.deepEqual(
+    dashboard.daily.map((item) => ({ date: item.date, total: item.total })),
+    [{ date: '2026-03-25', total: 2 }]
+  );
+
+  store.close();
+});
