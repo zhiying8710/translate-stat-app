@@ -2,8 +2,8 @@ module.exports = {
   apps: [
     {
       name: 'translate-stat-app',
-      cwd: '/Users/zhiying8710/wk/translate-stat-app',
-      script: './src/server.js',
+      cwd: __dirname,
+      script: 'src/server.js',
       interpreter: 'node',
       instances: 1,
       exec_mode: 'fork',

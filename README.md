@@ -19,6 +19,7 @@ npm start
 ## PM2 启动
 
 ```bash
+cd /path/to/translate-stat-app
 pm2 start ecosystem.config.js
 ```
 
