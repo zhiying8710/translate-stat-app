@@ -16,6 +16,21 @@ npm start
 
 默认启动地址：`http://127.0.0.1:3000/`
 
+## PM2 启动
+
+```bash
+pm2 start ecosystem.config.js
+```
+
+常用命令：
+
+```bash
+pm2 logs translate-stat-app
+pm2 restart translate-stat-app
+pm2 stop translate-stat-app
+pm2 save
+```
+
 可选环境变量：
 
 - `PORT`: 服务端口，默认 `3000`
