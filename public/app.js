@@ -39,7 +39,7 @@ async function bootstrap() {
   setLoading(true);
 
   try {
-    await loadHealth();
+    void loadHealth();
     await loadOptions();
     await loadDashboard();
   } finally {
@@ -63,11 +63,15 @@ async function refreshDashboard({ preserveSelections = false } = {}) {
 }
 
 async function loadHealth() {
-  const response = await fetch('/healthz');
-  const data = await response.json();
-  elements.healthText.textContent = data.ok ? '运行中' : '异常';
-  elements.retentionText.textContent = `${data.retention_days} 天`;
-  elements.timezoneText.textContent = data.time_zone;
+  try {
+    const data = await fetchJson('/healthz', { timeoutMs: 5000 });
+    elements.healthText.textContent = data.ok ? '运行中' : '异常';
+    elements.retentionText.textContent = `${data.retention_days} 天`;
+    elements.timezoneText.textContent = data.time_zone;
+  } catch (error) {
+    console.error(error);
+    elements.healthText.textContent = '检查失败';
+  }
 }
 
 async function loadOptions({ preserveSelections = false } = {}) {
@@ -81,8 +85,7 @@ async function loadOptions({ preserveSelections = false } = {}) {
     params.set('to', elements.to.value);
   }
 
-  const response = await fetch(`/api/options?${params.toString()}`);
-  const data = await response.json();
+  const data = await fetchJson(`/api/options?${params.toString()}`);
   state.options = data;
 
   if (!elements.from.value || !preserveSelections) {
@@ -110,8 +113,7 @@ async function loadDashboard() {
     }
   }
 
-  const response = await fetch(`/api/dashboard-data?${params.toString()}`);
-  const data = await response.json();
+  const data = await fetchJson(`/api/dashboard-data?${params.toString()}`);
   state.dashboard = data;
 
   renderSummary(data.summary);
@@ -133,6 +135,8 @@ async function loadDashboard() {
   renderCompositeBars('#user-chart', data.users.slice(0, 8), {
     primaryKey: 'app',
     secondaryKey: 'username',
+    primaryLabel: 'App',
+    secondaryLabel: '用户',
     valueKey: 'total',
     valueFormatter: (value) => `${value} 次`,
     color: '#7c3aed'
@@ -140,6 +144,8 @@ async function loadDashboard() {
   renderCompositeBars('#version-chart', data.versions.slice(0, 8), {
     primaryKey: 'app',
     secondaryKey: 'app_version',
+    primaryLabel: 'App',
+    secondaryLabel: '版本',
     valueKey: 'avg_duration_ms',
     valueFormatter: (value) => `${value.toFixed(2)} ms`,
     color: '#be123c'
@@ -190,6 +196,7 @@ function renderSummary(summary) {
 function setLoading(isLoading) {
   document.body.classList.toggle('is-loading', isLoading);
   elements.loadingOverlay.hidden = !isLoading;
+  elements.loadingOverlay.style.display = isLoading ? 'grid' : 'none';
   elements.apply.disabled = isLoading;
   elements.apply.textContent = isLoading ? '加载中...' : '刷新看板';
 }
@@ -340,8 +347,8 @@ function renderCompositeBars(selector, rows, config) {
       <div class="bar-row">
         <div class="bar-head">
           <div class="bar-label">
-            <strong class="bar-title">${escapeHtml(row[config.primaryKey])}</strong>
-            <span class="bar-subtitle">${escapeHtml(row[config.secondaryKey])}</span>
+            <strong class="bar-title">${escapeHtml(config.primaryLabel)}: ${escapeHtml(row[config.primaryKey])}</strong>
+            <span class="bar-subtitle">${escapeHtml(config.secondaryLabel)}: ${escapeHtml(row[config.secondaryKey])}</span>
           </div>
           <strong>${config.valueFormatter(value)}</strong>
         </div>
@@ -383,6 +390,25 @@ function renderTable(selector, rows, keyName) {
       <tbody>${body}</tbody>
     </table>
   `;
+}
+
+async function fetchJson(url, { timeoutMs = 15000 } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Request failed: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function escapeHtml(value) {
