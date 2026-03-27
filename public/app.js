@@ -3,6 +3,17 @@ const state = {
   dashboard: null
 };
 
+const CHART_COLORS = [
+  '#0f766e',
+  '#1d4ed8',
+  '#dc6803',
+  '#be123c',
+  '#7c3aed',
+  '#0891b2',
+  '#65a30d',
+  '#c2410c'
+];
+
 const elements = {
   from: document.querySelector('#from'),
   to: document.querySelector('#to'),
@@ -14,23 +25,34 @@ const elements = {
   apply: document.querySelector('#apply-filters'),
   healthText: document.querySelector('#health-text'),
   retentionText: document.querySelector('#retention-text'),
-  timezoneText: document.querySelector('#timezone-text')
+  timezoneText: document.querySelector('#timezone-text'),
+  loadingOverlay: document.querySelector('#loading-overlay')
 };
 
 bootstrap().catch((error) => {
   console.error(error);
+  setLoading(false);
   elements.healthText.textContent = '加载失败';
 });
 
 async function bootstrap() {
   await loadHealth();
-  await loadOptions();
-  await loadDashboard();
+  await refreshDashboard();
 
   elements.apply.addEventListener('click', async () => {
-    await loadOptions({ preserveSelections: true });
-    await loadDashboard();
+    await refreshDashboard({ preserveSelections: true });
   });
+}
+
+async function refreshDashboard({ preserveSelections = false } = {}) {
+  setLoading(true);
+
+  try {
+    await loadOptions({ preserveSelections });
+    await loadDashboard();
+  } finally {
+    setLoading(false);
+  }
 }
 
 async function loadHealth() {
@@ -86,16 +108,12 @@ async function loadDashboard() {
   state.dashboard = data;
 
   renderSummary(data.summary);
-  renderLineChart('#daily-total-chart', data.daily, {
-    labelKey: 'date',
+  renderMultiLineChart('#daily-total-chart', data.daily_by_app, {
     valueKey: 'total',
-    color: '#0f766e',
     formatter: (value) => value.toLocaleString()
   });
-  renderLineChart('#daily-success-chart', data.daily, {
-    labelKey: 'date',
+  renderMultiLineChart('#daily-success-chart', data.daily_by_app, {
     valueKey: 'success_rate',
-    color: '#dc6803',
     formatter: (value) => `${value.toFixed(2)}%`
   });
   renderStackedBars('#provider-chart', data.providers.slice(0, 8));
@@ -106,13 +124,13 @@ async function loadDashboard() {
     color: '#1d4ed8'
   });
   renderBars('#user-chart', data.users.slice(0, 8), {
-    labelKey: 'username',
+    labelKey: 'label',
     valueKey: 'total',
     valueFormatter: (value) => `${value} 次`,
     color: '#7c3aed'
   });
   renderBars('#version-chart', data.versions.slice(0, 8), {
-    labelKey: 'app_version',
+    labelKey: 'label',
     valueKey: 'avg_duration_ms',
     valueFormatter: (value) => `${value.toFixed(2)} ms`,
     color: '#be123c'
@@ -160,9 +178,16 @@ function renderSummary(summary) {
   document.querySelector('#summary-users').textContent = summary.unique_users.toLocaleString();
 }
 
-function renderLineChart(selector, rows, config) {
+function setLoading(isLoading) {
+  document.body.classList.toggle('is-loading', isLoading);
+  elements.loadingOverlay.classList.toggle('hidden', !isLoading);
+  elements.apply.disabled = isLoading;
+  elements.apply.textContent = isLoading ? '加载中...' : '刷新看板';
+}
+
+function renderMultiLineChart(selector, series, config) {
   const target = document.querySelector(selector);
-  if (!rows.length) {
+  if (!series.length || !series[0].points.length) {
     target.innerHTML = '<div class="empty-state">当前筛选条件下暂无数据</div>';
     return;
   }
@@ -170,30 +195,25 @@ function renderLineChart(selector, rows, config) {
   const width = 720;
   const height = 260;
   const padding = { top: 24, right: 20, bottom: 40, left: 44 };
-  const values = rows.map((row) => Number(row[config.valueKey] || 0));
+  const pointsTemplate = series[0].points;
+  const values = series.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
   const maxValue = Math.max(...values, 1);
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
 
-  const points = rows.map((row, index) => {
-    const x = padding.left + (index / Math.max(rows.length - 1, 1)) * innerWidth;
-    const y = padding.top + innerHeight - (Number(row[config.valueKey] || 0) / maxValue) * innerHeight;
-    return `${x},${y}`;
-  }).join(' ');
-
   const tickIndexes = new Set([
     0,
-    Math.floor((rows.length - 1) / 3),
-    Math.floor(((rows.length - 1) * 2) / 3),
-    rows.length - 1
+    Math.floor((pointsTemplate.length - 1) / 3),
+    Math.floor(((pointsTemplate.length - 1) * 2) / 3),
+    pointsTemplate.length - 1
   ]);
 
-  const xLabels = rows
+  const xLabels = pointsTemplate
     .map((row, index) => ({ row, index }))
     .filter(({ index }) => tickIndexes.has(index))
     .map(({ row, index }) => {
-      const x = padding.left + (index / Math.max(rows.length - 1, 1)) * innerWidth;
-      return `<text x="${x}" y="${height - 12}" text-anchor="middle">${row[config.labelKey].slice(5)}</text>`;
+      const x = padding.left + (index / Math.max(pointsTemplate.length - 1, 1)) * innerWidth;
+      return `<text x="${x}" y="${height - 12}" text-anchor="middle">${row.date.slice(5)}</text>`;
     })
     .join('');
 
@@ -207,12 +227,35 @@ function renderLineChart(selector, rows, config) {
     })
     .join('');
 
-  const lastPoint = rows[rows.length - 1];
+  const polylines = series.map((item, itemIndex) => {
+    const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
+    const points = item.points.map((row, index) => {
+      const x = padding.left + (index / Math.max(item.points.length - 1, 1)) * innerWidth;
+      const y = padding.top + innerHeight - (Number(row[config.valueKey] || 0) / maxValue) * innerHeight;
+      return `${x},${y}`;
+    }).join(' ');
+
+    return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
+  }).join('');
+
+  const legend = series.map((item, itemIndex) => {
+    const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
+    const lastPoint = item.points[item.points.length - 1];
+    return `
+      <span class="legend-item">
+        <span class="legend-dot" style="background:${color}"></span>
+        <span>${escapeHtml(item.label)}</span>
+        <strong>${config.formatter(Number(lastPoint[config.valueKey] || 0))}</strong>
+      </span>
+    `;
+  }).join('');
+
   target.innerHTML = `
-    <div class="chart-caption">最新值：${config.formatter(Number(lastPoint[config.valueKey] || 0))}</div>
+    <div class="chart-caption">按 App 分线展示，共 ${series.length} 条曲线</div>
+    <div class="chart-legend">${legend}</div>
     <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img">
       ${yTicks}
-      <polyline points="${points}" fill="none" stroke="${config.color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>
+      ${polylines}
       ${xLabels}
     </svg>
   `;

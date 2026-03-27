@@ -43,12 +43,30 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
       },
       {
         app: 'web-app',
-        provider: 'deepl',
+        provider: 'openai',
         success: true,
         duration_ms: 80,
         ts: '2026-03-26T12:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'web-app',
+        provider: 'deepl',
+        success: true,
+        duration_ms: 90,
+        ts: '2026-03-26T13:00:00+08:00',
         app_version: '2.1.0',
         username: 'bob'
+      },
+      {
+        app: 'nat',
+        provider: 'openai',
+        success: true,
+        duration_ms: 999,
+        ts: '2026-03-26T14:00:00+08:00',
+        app_version: '9.9.9',
+        username: 'system'
       }
     ]
   });
@@ -64,13 +82,28 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
     to: '2026-03-26'
   });
 
-  assert.equal(dashboard.summary.total, 3);
-  assert.equal(dashboard.summary.success_count, 2);
+  assert.equal(dashboard.summary.total, 4);
+  assert.equal(dashboard.summary.success_count, 3);
   assert.equal(dashboard.summary.failure_count, 1);
-  assert.equal(dashboard.summary.success_rate, 66.67);
+  assert.equal(dashboard.summary.success_rate, 75);
   assert.equal(dashboard.daily.length, 2);
+  assert.deepEqual(dashboard.daily_by_app.map((item) => item.app), ['desktop-app', 'web-app']);
+  assert.equal(dashboard.daily_by_app[0].points[0].total, 2);
+  assert.equal(dashboard.daily_by_app[0].points[1].total, 0);
+  assert.equal(dashboard.daily_by_app[1].points[0].total, 0);
+  assert.equal(dashboard.daily_by_app[1].points[1].total, 2);
   assert.equal(dashboard.providers[0].provider, 'openai');
-  assert.equal(dashboard.providers[0].total, 2);
+  assert.equal(dashboard.providers[0].total, 3);
+  assert.ok(!dashboard.apps.some((item) => item.app === 'nat'));
+  assert.ok(!dashboard.users.some((item) => item.app === 'nat'));
+  assert.ok(!dashboard.daily_by_app.some((item) => item.app === 'nat'));
+  assert.equal(dashboard.users[0].label, 'desktop-app / alice');
+  assert.equal(dashboard.users[0].total, 2);
+  assert.ok(dashboard.users.some((item) => item.label === 'web-app / alice' && item.total === 1));
+  assert.ok(dashboard.versions.some((item) => item.label === 'nat / 9.9.9' && item.avg_duration_ms === 999));
+  assert.equal(dashboard.versions[0].label, 'desktop-app / 1.0.0');
+  assert.equal(dashboard.versions[0].total, 2);
+  assert.ok(dashboard.versions.some((item) => item.label === 'web-app / 1.0.0' && item.total === 1));
 
   store.close();
 });

@@ -140,18 +140,39 @@ class StatsStore {
     };
 
     const rows = this.readRows(filters, range);
-    const daily = buildDailySeries(rows, range, this.timeZone);
-    const providers = buildAggregate(rows, 'provider', 'provider');
-    const apps = buildAggregate(rows, 'app', 'app');
-    const users = buildAggregate(rows, 'username', 'username');
-    const versions = buildAggregate(rows, 'app_version', 'app_version');
-    const summary = buildSummary(rows);
+    const metricRows = excludeNatFromStats(rows);
+    const daily = buildDailySeries(metricRows, range, this.timeZone);
+    const daily_by_app = buildDailySeriesByApp(metricRows, range, this.timeZone);
+    const providers = buildAggregate(metricRows, 'provider', 'provider');
+    const apps = buildAggregate(metricRows, 'app', 'app');
+    const users = buildCompositeAggregate(metricRows, {
+      outputKeyName: 'app_username',
+      identity: (row) => `${row.app}::${row.username}`,
+      fields: (row) => ({
+        app: row.app,
+        username: row.username,
+        app_username: `${row.app} / ${row.username}`,
+        label: `${row.app} / ${row.username}`
+      })
+    });
+    const versions = buildCompositeAggregate(rows, {
+      outputKeyName: 'app_app_version',
+      identity: (row) => `${row.app}::${row.app_version}`,
+      fields: (row) => ({
+        app: row.app,
+        app_version: row.app_version,
+        app_app_version: `${row.app} / ${row.app_version}`,
+        label: `${row.app} / ${row.app_version}`
+      })
+    });
+    const summary = buildSummary(metricRows);
 
     return {
       range,
       filters,
       summary,
       daily,
+      daily_by_app,
       providers,
       apps,
       users,
@@ -407,6 +428,14 @@ function parseTimestamp(value, fieldName) {
   return Math.round(numericTimestamp);
 }
 
+function excludeNatFromStats(rows) {
+  return rows.filter((row) => !isNatApp(row.app));
+}
+
+function isNatApp(app) {
+  return String(app).trim().toLowerCase() === 'nat';
+}
+
 function buildWhereClause(filters) {
   const clauses = [];
   const params = [];
@@ -479,6 +508,40 @@ function buildDailySeries(rows, range, timeZone) {
   return Array.from(series.values()).map(finalizeAggregate);
 }
 
+function buildDailySeriesByApp(rows, range, timeZone) {
+  const groups = new Map();
+  const dateKeys = enumerateDateKeys(range.from, range.to);
+
+  for (const row of rows) {
+    if (!groups.has(row.app)) {
+      groups.set(row.app, createSeriesTemplate(dateKeys));
+    }
+
+    const dateKey = dateKeyFromTimestamp(row.ts, timeZone);
+    const aggregate = groups.get(row.app).get(dateKey);
+    if (aggregate) {
+      updateAggregate(aggregate, row);
+    }
+  }
+
+  return Array.from(groups.entries())
+    .map(([app, series]) => {
+      const points = Array.from(series.values()).map(finalizeAggregate);
+      return {
+        app,
+        label: app,
+        total: points.reduce((sum, point) => sum + point.total, 0),
+        points
+      };
+    })
+    .sort((left, right) => {
+      if (right.total !== left.total) {
+        return right.total - left.total;
+      }
+      return left.app.localeCompare(right.app, 'zh-Hans-CN');
+    });
+}
+
 function buildAggregate(rows, fieldName, outputKeyName) {
   const groups = new Map();
 
@@ -501,9 +564,47 @@ function buildAggregate(rows, fieldName, outputKeyName) {
     });
 }
 
+function buildCompositeAggregate(rows, config) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const identity = config.identity(row);
+    if (!groups.has(identity)) {
+      groups.set(identity, createAggregate(config.fields(row)));
+    }
+
+    updateAggregate(groups.get(identity), row);
+  }
+
+  return Array.from(groups.values())
+    .map(finalizeAggregate)
+    .sort((left, right) => {
+      if (right.total !== left.total) {
+        return right.total - left.total;
+      }
+      return String(left[config.outputKeyName]).localeCompare(String(right[config.outputKeyName]), 'zh-Hans-CN');
+    });
+}
+
+function createSeriesTemplate(dateKeys) {
+  const series = new Map();
+
+  for (const dateKey of dateKeys) {
+    series.set(dateKey, createEmptyAggregate(dateKey, 'date'));
+  }
+
+  return series;
+}
+
 function createEmptyAggregate(keyValue, keyName) {
+  return createAggregate({
+    [keyName]: keyValue
+  });
+}
+
+function createAggregate(fields = {}) {
   return {
-    [keyName]: keyValue,
+    ...fields,
     total: 0,
     success_count: 0,
     failure_count: 0,
