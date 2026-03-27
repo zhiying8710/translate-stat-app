@@ -80,7 +80,10 @@ const server = http.createServer(async (req, res) => {
       const asset = staticFiles.get(requestUrl.pathname);
       const filePath = path.join(publicDir, asset.fileName);
       const content = fs.readFileSync(filePath);
-      res.writeHead(200, { 'Content-Type': asset.contentType });
+      res.writeHead(200, {
+        'Content-Type': asset.contentType,
+        'Cache-Control': 'no-store'
+      });
       res.end(content);
       return;
     }

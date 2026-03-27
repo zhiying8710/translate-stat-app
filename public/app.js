@@ -234,7 +234,7 @@ function renderMultiLineChart(selector, series, config) {
 
   const width = 720;
   const height = 260;
-  const padding = { top: 24, right: 20, bottom: 40, left: 84 };
+  const padding = { top: 24, right: 20, bottom: 40, left: 112 };
   const pointsTemplate = series[0].points;
   const values = effectiveSeries.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
   const maxValue = Math.max(...values, 1);
@@ -262,7 +262,7 @@ function renderMultiLineChart(selector, series, config) {
       const y = padding.top + innerHeight - (value / maxValue) * innerHeight;
       return `
         <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" class="grid-line" />
-        <text x="${padding.left - 10}" y="${y + 4}" text-anchor="end">${config.formatter(value)}</text>
+        <text x="10" y="${y + 4}" text-anchor="start">${config.formatter(value)}</text>
       `;
     })
     .join('');
