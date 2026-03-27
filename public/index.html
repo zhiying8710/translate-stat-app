@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>翻译统计看板</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Translation Stat App</p>
+          <h1>翻译服务统计看板</h1>
+          <p class="hero-copy">
+            接收翻译请求埋点，按天写入 SQLite，并在最近 30 天窗口内提供多维分析。
+          </p>
+        </div>
+        <div class="hero-meta">
+          <div class="meta-item">
+            <span>状态</span>
+            <strong id="health-text">检查中...</strong>
+          </div>
+          <div class="meta-item">
+            <span>保留策略</span>
+            <strong id="retention-text">30 天</strong>
+          </div>
+          <div class="meta-item">
+            <span>时区</span>
+            <strong id="timezone-text">Asia/Shanghai</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="filters card">
+        <div class="filter-grid">
+          <label>
+            <span>开始日期</span>
+            <input id="from" type="date" />
+          </label>
+          <label>
+            <span>结束日期</span>
+            <input id="to" type="date" />
+          </label>
+          <label>
+            <span>应用</span>
+            <select id="app"></select>
+          </label>
+          <label>
+            <span>服务商</span>
+            <select id="provider"></select>
+          </label>
+          <label>
+            <span>用户名</span>
+            <select id="username"></select>
+          </label>
+          <label>
+            <span>应用版本</span>
+            <select id="app_version"></select>
+          </label>
+          <label>
+            <span>成功状态</span>
+            <select id="success">
+              <option value="all">全部</option>
+              <option value="true">成功</option>
+              <option value="false">失败</option>
+            </select>
+          </label>
+          <div class="filter-actions">
+            <button id="apply-filters" class="primary-btn">刷新看板</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="summary-grid" id="summary-grid">
+        <article class="summary-card">
+          <span>总请求量</span>
+          <strong id="summary-total">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>成功率</span>
+          <strong id="summary-success-rate">0%</strong>
+        </article>
+        <article class="summary-card">
+          <span>平均耗时</span>
+          <strong id="summary-duration">0 ms</strong>
+        </article>
+        <article class="summary-card">
+          <span>App 数</span>
+          <strong id="summary-apps">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Provider 数</span>
+          <strong id="summary-providers">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>用户数</span>
+          <strong id="summary-users">0</strong>
+        </article>
+      </section>
+
+      <section class="chart-grid">
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>按日请求趋势</h2>
+            <p>观察整体量级变化</p>
+          </div>
+          <div id="daily-total-chart" class="chart-area"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>按日成功率</h2>
+            <p>识别失败波动</p>
+          </div>
+          <div id="daily-success-chart" class="chart-area"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>Provider 成功 / 失败分布</h2>
+            <p>按服务商观察健康度</p>
+          </div>
+          <div id="provider-chart" class="bar-list"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>App 请求量排行</h2>
+            <p>最多展示前 8 个应用</p>
+          </div>
+          <div id="app-chart" class="bar-list"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>用户请求量排行</h2>
+            <p>帮助定位高频使用者</p>
+          </div>
+          <div id="user-chart" class="bar-list"></div>
+        </article>
+
+        <article class="card chart-card">
+          <div class="section-head">
+            <h2>版本平均耗时</h2>
+            <p>按应用版本查看性能差异</p>
+          </div>
+          <div id="version-chart" class="bar-list"></div>
+        </article>
+      </section>
+
+      <section class="table-grid">
+        <article class="card table-card">
+          <div class="section-head">
+            <h2>Provider 明细</h2>
+            <p>成功率与平均耗时</p>
+          </div>
+          <div id="provider-table"></div>
+        </article>
+
+        <article class="card table-card">
+          <div class="section-head">
+            <h2>App 明细</h2>
+            <p>请求量与成功情况</p>
+          </div>
+          <div id="app-table"></div>
+        </article>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

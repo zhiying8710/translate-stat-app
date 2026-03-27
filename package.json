@@ -1,0 +1,16 @@
+{
+  "name": "translate-stat-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js translation statistics service with daily SQLite storage and dashboard.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --watch --no-warnings src/server.js",
+    "test": "node --test --no-warnings"
+  }
+}
