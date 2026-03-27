@@ -28,10 +28,6 @@ body {
     linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
 }
 
-.hidden {
-  display: none !important;
-}
-
 button,
 input,
 select {
@@ -320,6 +316,28 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.bar-label {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.bar-title,
+.bar-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-title {
+  font-size: 14px;
+}
+
+.bar-subtitle {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .single-track,

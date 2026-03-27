@@ -36,8 +36,15 @@ bootstrap().catch((error) => {
 });
 
 async function bootstrap() {
-  await loadHealth();
-  await refreshDashboard();
+  setLoading(true);
+
+  try {
+    await loadHealth();
+    await loadOptions();
+    await loadDashboard();
+  } finally {
+    setLoading(false);
+  }
 
   elements.apply.addEventListener('click', async () => {
     await refreshDashboard({ preserveSelections: true });
@@ -123,14 +130,16 @@ async function loadDashboard() {
     valueFormatter: (value) => `${value} 次`,
     color: '#1d4ed8'
   });
-  renderBars('#user-chart', data.users.slice(0, 8), {
-    labelKey: 'label',
+  renderCompositeBars('#user-chart', data.users.slice(0, 8), {
+    primaryKey: 'app',
+    secondaryKey: 'username',
     valueKey: 'total',
     valueFormatter: (value) => `${value} 次`,
     color: '#7c3aed'
   });
-  renderBars('#version-chart', data.versions.slice(0, 8), {
-    labelKey: 'label',
+  renderCompositeBars('#version-chart', data.versions.slice(0, 8), {
+    primaryKey: 'app',
+    secondaryKey: 'app_version',
     valueKey: 'avg_duration_ms',
     valueFormatter: (value) => `${value.toFixed(2)} ms`,
     color: '#be123c'
@@ -180,7 +189,7 @@ function renderSummary(summary) {
 
 function setLoading(isLoading) {
   document.body.classList.toggle('is-loading', isLoading);
-  elements.loadingOverlay.classList.toggle('hidden', !isLoading);
+  elements.loadingOverlay.hidden = !isLoading;
   elements.apply.disabled = isLoading;
   elements.apply.textContent = isLoading ? '加载中...' : '刷新看板';
 }
@@ -306,6 +315,34 @@ function renderBars(selector, rows, config) {
       <div class="bar-row">
         <div class="bar-head">
           <span>${escapeHtml(row[config.labelKey])}</span>
+          <strong>${config.valueFormatter(value)}</strong>
+        </div>
+        <div class="single-track">
+          <span class="single-fill" style="width: ${width}%; background: ${config.color};"></span>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderCompositeBars(selector, rows, config) {
+  const target = document.querySelector(selector);
+  if (!rows.length) {
+    target.innerHTML = '<div class="empty-state">当前筛选条件下暂无数据</div>';
+    return;
+  }
+
+  const maxValue = Math.max(...rows.map((row) => Number(row[config.valueKey] || 0)), 1);
+  target.innerHTML = rows.map((row) => {
+    const value = Number(row[config.valueKey] || 0);
+    const width = (value / maxValue) * 100;
+    return `
+      <div class="bar-row">
+        <div class="bar-head">
+          <div class="bar-label">
+            <strong class="bar-title">${escapeHtml(row[config.primaryKey])}</strong>
+            <span class="bar-subtitle">${escapeHtml(row[config.secondaryKey])}</span>
+          </div>
           <strong>${config.valueFormatter(value)}</strong>
         </div>
         <div class="single-track">
