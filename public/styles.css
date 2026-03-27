@@ -283,6 +283,26 @@ select {
   font-size: 13px;
 }
 
+.legend-button {
+  appearance: none;
+  cursor: pointer;
+  color: inherit;
+  transition: opacity 0.18s ease, transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.legend-button:hover {
+  transform: translateY(-1px);
+}
+
+.legend-button.is-active {
+  border-color: rgba(29, 78, 216, 0.28);
+  box-shadow: 0 8px 18px rgba(29, 78, 216, 0.08);
+}
+
+.legend-button.is-muted {
+  opacity: 0.48;
+}
+
 .legend-item strong {
   font-size: 12px;
 }

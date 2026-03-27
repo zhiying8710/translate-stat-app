@@ -1,6 +1,10 @@
 const state = {
   options: null,
-  dashboard: null
+  dashboard: null,
+  chartSelections: {
+    dailyTotal: null,
+    dailySuccess: null
+  }
 };
 
 const CHART_COLORS = [
@@ -116,12 +120,23 @@ async function loadDashboard() {
   const data = await fetchJson(`/api/dashboard-data?${params.toString()}`);
   state.dashboard = data;
 
+  renderDashboardViews();
+}
+
+function renderDashboardViews() {
+  const data = state.dashboard;
+  if (!data) {
+    return;
+  }
+
   renderSummary(data.summary);
   renderMultiLineChart('#daily-total-chart', data.daily_by_app, {
+    selectionKey: 'dailyTotal',
     valueKey: 'total',
     formatter: (value) => value.toLocaleString()
   });
   renderMultiLineChart('#daily-success-chart', data.daily_by_app, {
+    selectionKey: 'dailySuccess',
     valueKey: 'success_rate',
     formatter: (value) => `${value.toFixed(2)}%`
   });
@@ -208,11 +223,20 @@ function renderMultiLineChart(selector, series, config) {
     return;
   }
 
+  const selectedApp = series.some((item) => item.app === state.chartSelections[config.selectionKey])
+    ? state.chartSelections[config.selectionKey]
+    : null;
+  state.chartSelections[config.selectionKey] = selectedApp;
+  const visibleSeries = selectedApp
+    ? series.filter((item) => item.app === selectedApp)
+    : series;
+  const effectiveSeries = visibleSeries.length > 0 ? visibleSeries : series;
+
   const width = 720;
   const height = 260;
-  const padding = { top: 24, right: 20, bottom: 40, left: 44 };
+  const padding = { top: 24, right: 20, bottom: 40, left: 84 };
   const pointsTemplate = series[0].points;
-  const values = series.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
+  const values = effectiveSeries.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
   const maxValue = Math.max(...values, 1);
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
@@ -243,8 +267,9 @@ function renderMultiLineChart(selector, series, config) {
     })
     .join('');
 
-  const polylines = series.map((item, itemIndex) => {
-    const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
+  const polylines = effectiveSeries.map((item, itemIndex) => {
+    const originalIndex = series.findIndex((entry) => entry.app === item.app);
+    const color = CHART_COLORS[(originalIndex >= 0 ? originalIndex : itemIndex) % CHART_COLORS.length];
     const points = item.points.map((row, index) => {
       const x = padding.left + (index / Math.max(item.points.length - 1, 1)) * innerWidth;
       const y = padding.top + innerHeight - (Number(row[config.valueKey] || 0) / maxValue) * innerHeight;
@@ -257,17 +282,24 @@ function renderMultiLineChart(selector, series, config) {
   const legend = series.map((item, itemIndex) => {
     const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
     const lastPoint = item.points[item.points.length - 1];
+    const isActive = !selectedApp || selectedApp === item.app;
     return `
-      <span class="legend-item">
+      <button
+        type="button"
+        class="legend-item legend-button${isActive ? ' is-active' : ' is-muted'}"
+        data-selection-key="${config.selectionKey}"
+        data-app="${escapeHtml(item.app)}"
+        aria-pressed="${selectedApp === item.app ? 'true' : 'false'}"
+      >
         <span class="legend-dot" style="background:${color}"></span>
         <span>${escapeHtml(item.label)}</span>
         <strong>${config.formatter(Number(lastPoint[config.valueKey] || 0))}</strong>
-      </span>
+      </button>
     `;
   }).join('');
 
   target.innerHTML = `
-    <div class="chart-caption">按 App 分线展示，共 ${series.length} 条曲线</div>
+    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，再次点击可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线，点击图例可单独查看某个 App`}</div>
     <div class="chart-legend">${legend}</div>
     <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img">
       ${yTicks}
@@ -275,6 +307,14 @@ function renderMultiLineChart(selector, series, config) {
       ${xLabels}
     </svg>
   `;
+
+  target.querySelectorAll('.legend-button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const { selectionKey, app } = button.dataset;
+      state.chartSelections[selectionKey] = state.chartSelections[selectionKey] === app ? null : app;
+      renderDashboardViews();
+    });
+  });
 }
 
 function renderStackedBars(selector, rows) {
