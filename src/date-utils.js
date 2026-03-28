@@ -1,4 +1,5 @@
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_LOOKBACK_DAYS = 7;
 
 function isValidDateKey(value) {
   return typeof value === 'string' && DATE_KEY_PATTERN.test(value);
@@ -64,7 +65,8 @@ function dateKeyFromTimestamp(timestamp, timeZone) {
 
 function resolveDateRange({ from, to, timeZone, retentionDays, now = Date.now() }) {
   const today = dateKeyFromTimestamp(now, timeZone);
-  const defaultFrom = shiftDateKey(today, -(retentionDays - 1));
+  const defaultWindowDays = Math.min(retentionDays, DEFAULT_LOOKBACK_DAYS);
+  const defaultFrom = shiftDateKey(today, -(defaultWindowDays - 1));
   const resolvedFrom = from || defaultFrom;
   const resolvedTo = to || today;
 

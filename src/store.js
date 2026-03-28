@@ -94,7 +94,8 @@ class StatsStore {
       from: input.from,
       to: input.to,
       timeZone: this.timeZone,
-      retentionDays: this.retentionDays
+      retentionDays: this.retentionDays,
+      now: this.nowProvider()
     });
 
     const rows = this.readRows({}, range);
@@ -129,7 +130,8 @@ class StatsStore {
       from: input.from,
       to: input.to,
       timeZone: this.timeZone,
-      retentionDays: this.retentionDays
+      retentionDays: this.retentionDays,
+      now: this.nowProvider()
     });
 
     const filters = {

@@ -284,3 +284,18 @@ test('provider hourly series only keeps the latest two local days inside the sel
 
   store.close();
 });
+
+test('default date range uses the latest seven local days within retention', () => {
+  const { store } = createStore(30);
+
+  const options = store.getOptions();
+  const dashboard = store.getDashboardData();
+
+  assert.equal(options.range.from, '2026-03-21');
+  assert.equal(options.range.to, '2026-03-27');
+  assert.equal(options.range.defaultFrom, '2026-03-21');
+  assert.equal(dashboard.range.from, '2026-03-21');
+  assert.equal(dashboard.range.to, '2026-03-27');
+
+  store.close();
+});
