@@ -92,6 +92,11 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
   assert.equal(dashboard.daily_by_app[0].points[1].total, 0);
   assert.equal(dashboard.daily_by_app[1].points[0].total, 0);
   assert.equal(dashboard.daily_by_app[1].points[1].total, 2);
+  assert.deepEqual(dashboard.provider_hourly.map((item) => item.provider), ['openai', 'deepl']);
+  assert.equal(dashboard.provider_hourly[0].points.length, 48);
+  assert.ok(dashboard.provider_hourly[0].points.some((point) => point.date === '2026-03-25 09:00' && point.total === 1));
+  assert.ok(dashboard.provider_hourly[1].points.some((point) => point.date === '2026-03-26 13:00' && point.total === 1));
+  assert.ok(!dashboard.provider_hourly.some((item) => item.provider === 'nat'));
   assert.equal(dashboard.providers[0].provider, 'openai');
   assert.equal(dashboard.providers[0].total, 3);
   assert.equal(dashboard.nat_providers.length, 1);
@@ -227,6 +232,55 @@ test('date range filters still work when a row is stored in an adjacent daily db
     dashboard.daily.map((item) => ({ date: item.date, total: item.total })),
     [{ date: '2026-03-28', total: 1 }]
   );
+
+  store.close();
+});
+
+test('provider hourly series only keeps the latest two local days inside the selected range', () => {
+  const { store } = createStore(3650);
+
+  store.insertEvents({
+    events: [
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 50,
+        ts: '2026-03-24T10:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: true,
+        duration_ms: 60,
+        ts: '2026-03-25T11:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      },
+      {
+        app: 'desktop-app',
+        provider: 'openai',
+        success: false,
+        duration_ms: 70,
+        ts: '2026-03-26T12:00:00+08:00',
+        app_version: '1.0.0',
+        username: 'alice'
+      }
+    ]
+  });
+
+  const dashboard = store.getDashboardData({
+    from: '2026-03-24',
+    to: '2026-03-26'
+  });
+
+  assert.equal(dashboard.provider_hourly.length, 1);
+  assert.equal(dashboard.provider_hourly[0].points.length, 48);
+  assert.ok(dashboard.provider_hourly[0].points.every((point) => !point.date.startsWith('2026-03-24')));
+  assert.ok(dashboard.provider_hourly[0].points.some((point) => point.date === '2026-03-25 11:00' && point.total === 1));
+  assert.ok(dashboard.provider_hourly[0].points.some((point) => point.date === '2026-03-26 12:00' && point.total === 1));
 
   store.close();
 });

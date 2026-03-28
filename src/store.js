@@ -145,6 +145,7 @@ class StatsStore {
     const natRows = rows.filter((row) => isNatApp(row.app));
     const daily = buildDailySeries(metricRows, range, this.timeZone);
     const daily_by_app = buildDailySeriesByApp(metricRows, range, this.timeZone);
+    const provider_hourly = buildHourlySeriesByProvider(metricRows, range, this.timeZone);
     const providers = buildAggregate(metricRows, 'provider', 'provider');
     const nat_providers = buildAggregate(natRows, 'provider', 'provider');
     const apps = buildAggregate(metricRows, 'app', 'app');
@@ -176,6 +177,7 @@ class StatsStore {
       summary,
       daily,
       daily_by_app,
+      provider_hourly,
       providers,
       nat_providers,
       apps,
@@ -552,6 +554,48 @@ function buildDailySeriesByApp(rows, range, timeZone) {
     });
 }
 
+function buildHourlySeriesByProvider(rows, range, timeZone) {
+  const recentFrom = range.from > shiftDateKey(range.to, -1)
+    ? range.from
+    : shiftDateKey(range.to, -1);
+  const hourKeys = enumerateHourKeys(recentFrom, range.to);
+  const groups = new Map();
+
+  for (const row of rows) {
+    const dateKey = dateKeyFromTimestamp(row.ts, timeZone);
+    if (dateKey < recentFrom || dateKey > range.to) {
+      continue;
+    }
+
+    if (!groups.has(row.provider)) {
+      groups.set(row.provider, createSeriesTemplate(hourKeys));
+    }
+
+    const hourKey = hourKeyFromTimestamp(row.ts, timeZone);
+    const aggregate = groups.get(row.provider).get(hourKey);
+    if (aggregate) {
+      updateAggregate(aggregate, row);
+    }
+  }
+
+  return Array.from(groups.entries())
+    .map(([provider, series]) => {
+      const points = Array.from(series.values()).map(finalizeAggregate);
+      return {
+        provider,
+        label: provider,
+        total: points.reduce((sum, point) => sum + point.total, 0),
+        points
+      };
+    })
+    .sort((left, right) => {
+      if (right.total !== left.total) {
+        return right.total - left.total;
+      }
+      return left.provider.localeCompare(right.provider, 'zh-Hans-CN');
+    });
+}
+
 function buildAggregate(rows, fieldName, outputKeyName) {
   const groups = new Map();
 
@@ -604,6 +648,33 @@ function createSeriesTemplate(dateKeys) {
   }
 
   return series;
+}
+
+function enumerateHourKeys(from, to) {
+  const hourKeys = [];
+
+  for (const dateKey of enumerateDateKeys(from, to)) {
+    for (let hour = 0; hour < 24; hour += 1) {
+      hourKeys.push(`${dateKey} ${String(hour).padStart(2, '0')}:00`);
+    }
+  }
+
+  return hourKeys;
+}
+
+function hourKeyFromTimestamp(timestamp, timeZone) {
+  const date = new Date(timestamp);
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23'
+  });
+  const parts = formatter.formatToParts(date);
+  const mapped = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${mapped.year}-${mapped.month}-${mapped.day} ${mapped.hour}:00`;
 }
 
 function createEmptyAggregate(keyValue, keyName) {

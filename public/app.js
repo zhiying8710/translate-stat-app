@@ -3,7 +3,8 @@ const state = {
   dashboard: null,
   chartSelections: {
     dailyTotal: null,
-    dailySuccess: null
+    dailySuccess: null,
+    providerHourly: null
   }
 };
 
@@ -155,6 +156,22 @@ function renderDashboardViews() {
       `失败 ${Number(point.failure_count || 0).toLocaleString()}`
     ]
   });
+  renderMultiLineChart('#provider-hourly-chart', data.provider_hourly.slice(0, 6), {
+    selectionKey: 'providerHourly',
+    seriesKey: 'provider',
+    seriesLabel: 'Provider',
+    valueKey: 'total',
+    metricLabel: '调用量',
+    width: 920,
+    xTickCount: 8,
+    formatter: (value) => value.toLocaleString(),
+    legendValue: (item) => Number(item.total || 0),
+    tooltipLines: (point) => [
+      `成功 ${Number(point.success_count || 0).toLocaleString()}`,
+      `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
+      `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
+    ]
+  });
   renderStackedBars('#provider-chart', data.providers.slice(0, 8));
   renderStackedBars('#nat-provider-chart', data.nat_providers.slice(0, 8));
   renderBars('#app-chart', data.apps.slice(0, 8), {
@@ -240,17 +257,19 @@ function renderMultiLineChart(selector, series, config) {
     return;
   }
 
-  const selectedApp = series.some((item) => item.app === state.chartSelections[config.selectionKey])
+  const seriesKey = config.seriesKey || 'app';
+  const seriesLabel = config.seriesLabel || 'App';
+  const selectedSeries = series.some((item) => item[seriesKey] === state.chartSelections[config.selectionKey])
     ? state.chartSelections[config.selectionKey]
     : null;
-  state.chartSelections[config.selectionKey] = selectedApp;
-  const visibleSeries = selectedApp
-    ? series.filter((item) => item.app === selectedApp)
+  state.chartSelections[config.selectionKey] = selectedSeries;
+  const visibleSeries = selectedSeries
+    ? series.filter((item) => item[seriesKey] === selectedSeries)
     : series;
   const effectiveSeries = visibleSeries.length > 0 ? visibleSeries : series;
 
-  const width = 720;
-  const height = 260;
+  const width = config.width || 720;
+  const height = config.height || 260;
   const padding = { top: 24, right: 20, bottom: 40, left: 112 };
   const pointsTemplate = series[0].points;
   const values = effectiveSeries.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
@@ -258,7 +277,7 @@ function renderMultiLineChart(selector, series, config) {
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
   const chartId = `chart-${config.selectionKey}`;
-  const xTicks = buildTickIndexes(pointsTemplate.length, 5);
+  const xTicks = buildTickIndexes(pointsTemplate.length, config.xTickCount || 5);
   const pointLookup = new Map();
 
   const xLabels = pointsTemplate
@@ -284,7 +303,7 @@ function renderMultiLineChart(selector, series, config) {
     .join('');
 
   const defs = effectiveSeries.map((item, itemIndex) => {
-    const originalIndex = series.findIndex((entry) => entry.app === item.app);
+    const originalIndex = series.findIndex((entry) => entry[seriesKey] === item[seriesKey]);
     const color = CHART_COLORS[(originalIndex >= 0 ? originalIndex : itemIndex) % CHART_COLORS.length];
     return `
       <linearGradient id="${chartId}-area-${itemIndex}" x1="0%" y1="0%" x2="0%" y2="100%">
@@ -295,7 +314,7 @@ function renderMultiLineChart(selector, series, config) {
   }).join('');
 
   const polylines = effectiveSeries.map((item, itemIndex) => {
-    const originalIndex = series.findIndex((entry) => entry.app === item.app);
+    const originalIndex = series.findIndex((entry) => entry[seriesKey] === item[seriesKey]);
     const color = CHART_COLORS[(originalIndex >= 0 ? originalIndex : itemIndex) % CHART_COLORS.length];
     const points = item.points.map((row, index) => {
       const x = padding.left + (index / Math.max(item.points.length - 1, 1)) * innerWidth;
@@ -310,7 +329,7 @@ function renderMultiLineChart(selector, series, config) {
         color,
         x,
         y,
-        app: item.app,
+        seriesValue: item[seriesKey],
         label: item.label,
         point: row,
         value: Number(row[config.valueKey] || 0)
@@ -329,7 +348,7 @@ function renderMultiLineChart(selector, series, config) {
       : '';
 
     return `
-      <g class="chart-series" data-series-app="${escapeHtml(item.app)}">
+      <g class="chart-series" data-series-value="${escapeHtml(item[seriesKey])}">
         ${area}
         <polyline points="${points}" class="chart-line-shadow" stroke="${color}" filter="url(#${chartId}-glow)"></polyline>
         <polyline points="${points}" class="chart-line" stroke="${color}"></polyline>
@@ -340,7 +359,7 @@ function renderMultiLineChart(selector, series, config) {
 
   const legend = series.map((item, itemIndex) => {
     const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
-    const isActive = !selectedApp || selectedApp === item.app;
+    const isActive = !selectedSeries || selectedSeries === item[seriesKey];
     const legendValue = typeof config.legendValue === 'function'
       ? config.legendValue(item)
       : Number(item.points[item.points.length - 1]?.[config.valueKey] || 0);
@@ -349,8 +368,8 @@ function renderMultiLineChart(selector, series, config) {
         type="button"
         class="legend-item legend-button${isActive ? ' is-active' : ' is-muted'}"
         data-selection-key="${config.selectionKey}"
-        data-app="${escapeHtml(item.app)}"
-        aria-pressed="${selectedApp === item.app ? 'true' : 'false'}"
+        data-series-value="${escapeHtml(item[seriesKey])}"
+        aria-pressed="${selectedSeries === item[seriesKey] ? 'true' : 'false'}"
       >
         <span class="legend-dot" style="background:${color}"></span>
         <span>${escapeHtml(item.label)}</span>
@@ -360,7 +379,7 @@ function renderMultiLineChart(selector, series, config) {
   }).join('');
 
   target.innerHTML = `
-    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，悬浮数据点可查看具体数值，再次点击图例可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线；悬浮数据点查看具体数值，点击图例可单独查看某个 App`}</div>
+    <div class="chart-caption">${selectedSeries ? `已聚焦 ${escapeHtml(selectedSeries)}，悬浮数据点可查看具体数值，再次点击图例可恢复全部 ${seriesLabel}` : `按 ${seriesLabel} 分线展示，共 ${series.length} 条曲线；悬浮数据点查看具体数值，点击图例可单独查看某个 ${seriesLabel}`}</div>
     <div class="chart-legend">${legend}</div>
     <div class="chart-shell">
       <div class="chart-tooltip" hidden></div>
@@ -388,8 +407,8 @@ function renderMultiLineChart(selector, series, config) {
 
   target.querySelectorAll('.legend-button').forEach((button) => {
     button.addEventListener('click', () => {
-      const { selectionKey, app } = button.dataset;
-      state.chartSelections[selectionKey] = state.chartSelections[selectionKey] === app ? null : app;
+      const { selectionKey, seriesValue } = button.dataset;
+      state.chartSelections[selectionKey] = state.chartSelections[selectionKey] === seriesValue ? null : seriesValue;
       renderDashboardViews();
     });
   });
@@ -491,7 +510,7 @@ function setupLineChartTooltip(target, pointLookup, config) {
     const activePoint = pointId ? pointLookup.get(pointId) : null;
 
     target.querySelectorAll('.chart-series').forEach((seriesGroup) => {
-      const isActive = !activePoint || seriesGroup.dataset.seriesApp === activePoint.app;
+      const isActive = !activePoint || seriesGroup.dataset.seriesValue === activePoint.seriesValue;
       seriesGroup.classList.toggle('is-highlighted', Boolean(activePoint) && isActive);
       seriesGroup.classList.toggle('is-dimmed', Boolean(activePoint) && !isActive);
     });
