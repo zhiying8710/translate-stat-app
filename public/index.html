@@ -49,7 +49,7 @@
         }
       }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=20260328-1" />
+    <link rel="stylesheet" href="/styles.css?v=20260328-2" />
   </head>
   <body class="is-loading">
     <div id="loading-overlay" class="loading-overlay" aria-live="polite" aria-busy="true">
@@ -218,8 +218,32 @@
           <div id="app-table"></div>
         </article>
       </section>
+
+      <section class="nat-section">
+        <div class="section-head nat-section-head">
+          <h2>NAT Provider 专区</h2>
+          <p>单独展示 app = nat 的服务商成功 / 失败分布与明细</p>
+        </div>
+        <div class="table-grid nat-grid">
+          <article class="card chart-card">
+            <div class="section-head">
+              <h2>NAT Provider 成功 / 失败分布</h2>
+              <p>仅统计 app = nat 的服务商健康度</p>
+            </div>
+            <div id="nat-provider-chart" class="bar-list"></div>
+          </article>
+
+          <article class="card table-card">
+            <div class="section-head">
+              <h2>NAT Provider 明细</h2>
+              <p>仅统计 app = nat 的成功率与平均耗时</p>
+            </div>
+            <div id="nat-provider-table"></div>
+          </article>
+        </div>
+      </section>
     </div>
 
-    <script src="/app.js?v=20260328-1"></script>
+    <script src="/app.js?v=20260328-2"></script>
   </body>
 </html>

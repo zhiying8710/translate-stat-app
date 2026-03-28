@@ -142,9 +142,11 @@ class StatsStore {
 
     const rows = this.readRows(filters, range);
     const metricRows = excludeNatFromStats(rows);
+    const natRows = rows.filter((row) => isNatApp(row.app));
     const daily = buildDailySeries(metricRows, range, this.timeZone);
     const daily_by_app = buildDailySeriesByApp(metricRows, range, this.timeZone);
     const providers = buildAggregate(metricRows, 'provider', 'provider');
+    const nat_providers = buildAggregate(natRows, 'provider', 'provider');
     const apps = buildAggregate(metricRows, 'app', 'app');
     const users = buildCompositeAggregate(metricRows, {
       outputKeyName: 'app_username',
@@ -175,6 +177,7 @@ class StatsStore {
       daily,
       daily_by_app,
       providers,
+      nat_providers,
       apps,
       users,
       versions

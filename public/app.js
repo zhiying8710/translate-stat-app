@@ -133,16 +133,30 @@ function renderDashboardViews() {
   renderMultiLineChart('#daily-total-chart', data.daily_by_app, {
     selectionKey: 'dailyTotal',
     valueKey: 'total',
+    metricLabel: '请求量',
     formatter: (value) => value.toLocaleString(),
-    legendValue: (item) => Number(item.total || 0)
+    legendValue: (item) => Number(item.total || 0),
+    tooltipLines: (point) => [
+      `成功 ${Number(point.success_count || 0).toLocaleString()}`,
+      `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
+      `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
+    ]
   });
   renderMultiLineChart('#daily-success-chart', data.daily_by_app, {
     selectionKey: 'dailySuccess',
     valueKey: 'success_rate',
+    metricLabel: '成功率',
+    maxDomainValue: 100,
+    tickValues: [0, 25, 50, 75, 100],
     formatter: (value) => `${value.toFixed(2)}%`,
-    legendValue: (item) => getSeriesSuccessRate(item)
+    legendValue: (item) => getSeriesSuccessRate(item),
+    tooltipLines: (point) => [
+      `成功 ${Number(point.success_count || 0).toLocaleString()} / 总计 ${Number(point.total || 0).toLocaleString()}`,
+      `失败 ${Number(point.failure_count || 0).toLocaleString()}`
+    ]
   });
   renderStackedBars('#provider-chart', data.providers.slice(0, 8));
+  renderStackedBars('#nat-provider-chart', data.nat_providers.slice(0, 8));
   renderBars('#app-chart', data.apps.slice(0, 8), {
     labelKey: 'app',
     valueKey: 'total',
@@ -168,6 +182,7 @@ function renderDashboardViews() {
     color: '#be123c'
   });
   renderTable('#provider-table', data.providers.slice(0, 12), 'provider');
+  renderTable('#nat-provider-table', data.nat_providers.slice(0, 12), 'provider');
   renderTable('#app-table', data.apps.slice(0, 12), 'app');
 }
 
@@ -239,27 +254,26 @@ function renderMultiLineChart(selector, series, config) {
   const padding = { top: 24, right: 20, bottom: 40, left: 112 };
   const pointsTemplate = series[0].points;
   const values = effectiveSeries.flatMap((item) => item.points.map((point) => Number(point[config.valueKey] || 0)));
-  const maxValue = Math.max(...values, 1);
+  const { maxValue, tickValues } = resolveChartScale(values, config);
   const innerWidth = width - padding.left - padding.right;
   const innerHeight = height - padding.top - padding.bottom;
-
-  const tickIndexes = new Set([
-    0,
-    Math.floor((pointsTemplate.length - 1) / 3),
-    Math.floor(((pointsTemplate.length - 1) * 2) / 3),
-    pointsTemplate.length - 1
-  ]);
+  const chartId = `chart-${config.selectionKey}`;
+  const xTicks = buildTickIndexes(pointsTemplate.length, 5);
+  const pointLookup = new Map();
 
   const xLabels = pointsTemplate
     .map((row, index) => ({ row, index }))
-    .filter(({ index }) => tickIndexes.has(index))
+    .filter(({ index }) => xTicks.has(index))
     .map(({ row, index }) => {
       const x = padding.left + (index / Math.max(pointsTemplate.length - 1, 1)) * innerWidth;
-      return `<text x="${x}" y="${height - 12}" text-anchor="middle">${row.date.slice(5)}</text>`;
+      return `
+        <line x1="${x}" y1="${padding.top}" x2="${x}" y2="${height - padding.bottom}" class="grid-line grid-line-vertical" />
+        <text x="${x}" y="${height - 12}" text-anchor="middle">${row.date.slice(5)}</text>
+      `;
     })
     .join('');
 
-  const yTicks = [0, maxValue / 2, maxValue]
+  const yTicks = tickValues
     .map((value) => {
       const y = padding.top + innerHeight - (value / maxValue) * innerHeight;
       return `
@@ -269,6 +283,17 @@ function renderMultiLineChart(selector, series, config) {
     })
     .join('');
 
+  const defs = effectiveSeries.map((item, itemIndex) => {
+    const originalIndex = series.findIndex((entry) => entry.app === item.app);
+    const color = CHART_COLORS[(originalIndex >= 0 ? originalIndex : itemIndex) % CHART_COLORS.length];
+    return `
+      <linearGradient id="${chartId}-area-${itemIndex}" x1="0%" y1="0%" x2="0%" y2="100%">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.24"></stop>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+      </linearGradient>
+    `;
+  }).join('');
+
   const polylines = effectiveSeries.map((item, itemIndex) => {
     const originalIndex = series.findIndex((entry) => entry.app === item.app);
     const color = CHART_COLORS[(originalIndex >= 0 ? originalIndex : itemIndex) % CHART_COLORS.length];
@@ -277,8 +302,40 @@ function renderMultiLineChart(selector, series, config) {
       const y = padding.top + innerHeight - (Number(row[config.valueKey] || 0) / maxValue) * innerHeight;
       return `${x},${y}`;
     }).join(' ');
+    const pointGroups = item.points.map((row, index) => {
+      const x = padding.left + (index / Math.max(item.points.length - 1, 1)) * innerWidth;
+      const y = padding.top + innerHeight - (Number(row[config.valueKey] || 0) / maxValue) * innerHeight;
+      const pointId = `${config.selectionKey}-${itemIndex}-${index}`;
+      pointLookup.set(pointId, {
+        color,
+        x,
+        y,
+        app: item.app,
+        label: item.label,
+        point: row,
+        value: Number(row[config.valueKey] || 0)
+      });
+      return `
+        <g class="chart-point-group" data-point-id="${pointId}">
+          <circle cx="${x}" cy="${y}" r="10" class="chart-point-glow" fill="${color}"></circle>
+          <circle cx="${x}" cy="${y}" r="4.5" class="chart-point-core" fill="${color}"></circle>
+          <circle cx="${x}" cy="${y}" r="13" class="chart-point-hit" data-point-id="${pointId}" tabindex="0" aria-label="${escapeHtml(`${item.label} ${row.date} ${config.metricLabel} ${config.formatter(Number(row[config.valueKey] || 0))}`)}"></circle>
+        </g>
+      `;
+    }).join('');
+    const areaPoints = `${padding.left},${height - padding.bottom} ${points} ${padding.left + innerWidth},${height - padding.bottom}`;
+    const area = effectiveSeries.length === 1
+      ? `<polygon points="${areaPoints}" class="chart-area-fill" fill="url(#${chartId}-area-${itemIndex})"></polygon>`
+      : '';
 
-    return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></polyline>`;
+    return `
+      <g class="chart-series" data-series-app="${escapeHtml(item.app)}">
+        ${area}
+        <polyline points="${points}" class="chart-line-shadow" stroke="${color}" filter="url(#${chartId}-glow)"></polyline>
+        <polyline points="${points}" class="chart-line" stroke="${color}"></polyline>
+        ${pointGroups}
+      </g>
+    `;
   }).join('');
 
   const legend = series.map((item, itemIndex) => {
@@ -303,13 +360,30 @@ function renderMultiLineChart(selector, series, config) {
   }).join('');
 
   target.innerHTML = `
-    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，再次点击可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线，图例数值为当前筛选范围内汇总，点击图例可单独查看某个 App`}</div>
+    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，悬浮数据点可查看具体数值，再次点击图例可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线；悬浮数据点查看具体数值，点击图例可单独查看某个 App`}</div>
     <div class="chart-legend">${legend}</div>
-    <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img">
-      ${yTicks}
-      ${polylines}
-      ${xLabels}
-    </svg>
+    <div class="chart-shell">
+      <div class="chart-tooltip" hidden></div>
+      <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img">
+        <defs>
+          <filter id="${chartId}-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="coloredBlur"></feGaussianBlur>
+            <feMerge>
+              <feMergeNode in="coloredBlur"></feMergeNode>
+              <feMergeNode in="SourceGraphic"></feMergeNode>
+            </feMerge>
+          </filter>
+          ${defs}
+        </defs>
+        <rect x="${padding.left - 12}" y="${padding.top - 8}" width="${innerWidth + 24}" height="${innerHeight + 16}" rx="22" class="chart-panel"></rect>
+        <line x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}" class="axis-line"></line>
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" class="axis-line axis-line-y"></line>
+        <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${height - padding.bottom}" class="chart-guide-line" hidden></line>
+        ${xLabels}
+        ${yTicks}
+        ${polylines}
+      </svg>
+    </div>
   `;
 
   target.querySelectorAll('.legend-button').forEach((button) => {
@@ -319,6 +393,196 @@ function renderMultiLineChart(selector, series, config) {
       renderDashboardViews();
     });
   });
+
+  setupLineChartTooltip(target, pointLookup, config);
+}
+
+function resolveChartScale(values, config) {
+  if (Array.isArray(config.tickValues) && config.tickValues.length > 1) {
+    return {
+      maxValue: Number(config.maxDomainValue || config.tickValues[config.tickValues.length - 1] || 1),
+      tickValues: config.tickValues
+    };
+  }
+
+  const maxInput = Math.max(...values, 1);
+  const maxValue = Number(config.maxDomainValue || getNiceMaxValue(maxInput));
+  return {
+    maxValue,
+    tickValues: buildTickValues(maxValue)
+  };
+}
+
+function getNiceMaxValue(value) {
+  const rawStep = getNiceStep(value / 4);
+  return Math.max(rawStep, Math.ceil(value / rawStep) * rawStep, 1);
+}
+
+function getNiceStep(value) {
+  if (!Number.isFinite(value) || value <= 1) {
+    return 1;
+  }
+
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  const normalized = value / magnitude;
+
+  if (normalized <= 1) {
+    return magnitude;
+  }
+  if (normalized <= 2) {
+    return 2 * magnitude;
+  }
+  if (normalized <= 2.5) {
+    return 2.5 * magnitude;
+  }
+  if (normalized <= 5) {
+    return 5 * magnitude;
+  }
+  return 10 * magnitude;
+}
+
+function buildTickValues(maxValue) {
+  if (maxValue <= 4) {
+    return Array.from({ length: maxValue + 1 }, (_, index) => index);
+  }
+
+  const step = getNiceStep(maxValue / 4);
+  const ticks = [];
+
+  for (let value = 0; value <= maxValue + step / 2; value += step) {
+    ticks.push(Number(value.toFixed(4)));
+  }
+
+  if (ticks[ticks.length - 1] !== maxValue) {
+    ticks[ticks.length - 1] = maxValue;
+  }
+
+  return ticks;
+}
+
+function buildTickIndexes(length, desiredCount) {
+  if (length <= 1) {
+    return new Set([0]);
+  }
+
+  const total = Math.min(length, Math.max(desiredCount, 2));
+  const indexes = new Set();
+
+  for (let step = 0; step < total; step += 1) {
+    const index = Math.round((step / (total - 1)) * (length - 1));
+    indexes.add(index);
+  }
+
+  return indexes;
+}
+
+function setupLineChartTooltip(target, pointLookup, config) {
+  const tooltip = target.querySelector('.chart-tooltip');
+  const shell = target.querySelector('.chart-shell');
+  const svg = target.querySelector('.line-chart');
+  const guideLine = target.querySelector('.chart-guide-line');
+  let activePointId = null;
+
+  if (!tooltip || !shell || !svg || !guideLine) {
+    return;
+  }
+
+  const updateSeriesState = (pointId) => {
+    const activePoint = pointId ? pointLookup.get(pointId) : null;
+
+    target.querySelectorAll('.chart-series').forEach((seriesGroup) => {
+      const isActive = !activePoint || seriesGroup.dataset.seriesApp === activePoint.app;
+      seriesGroup.classList.toggle('is-highlighted', Boolean(activePoint) && isActive);
+      seriesGroup.classList.toggle('is-dimmed', Boolean(activePoint) && !isActive);
+    });
+
+    target.querySelectorAll('.chart-point-group').forEach((pointGroup) => {
+      pointGroup.classList.toggle('is-active', pointGroup.dataset.pointId === pointId);
+    });
+  };
+
+  const positionTooltip = (point) => {
+    const scaleX = svg.clientWidth / svg.viewBox.baseVal.width;
+    const scaleY = svg.clientHeight / svg.viewBox.baseVal.height;
+    const pointX = point.x * scaleX;
+    const pointY = point.y * scaleY;
+    const tooltipWidth = tooltip.offsetWidth;
+    const tooltipHeight = tooltip.offsetHeight;
+    let left = pointX + 18;
+    let top = pointY - tooltipHeight - 14;
+
+    if (left + tooltipWidth > shell.clientWidth - 8) {
+      left = pointX - tooltipWidth - 18;
+    }
+    if (left < 8) {
+      left = 8;
+    }
+    if (top < 8) {
+      top = pointY + 18;
+    }
+    if (top + tooltipHeight > shell.clientHeight - 8) {
+      top = shell.clientHeight - tooltipHeight - 8;
+    }
+
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  };
+
+  const showTooltip = (pointId) => {
+    if (!pointLookup.has(pointId)) {
+      return;
+    }
+
+    activePointId = pointId;
+    const { label, point, value, color, x } = pointLookup.get(pointId);
+    const extraLines = typeof config.tooltipLines === 'function' ? config.tooltipLines(point) : [];
+    const tooltipRows = extraLines.map((line) => `<div class="chart-tooltip-row">${escapeHtml(line)}</div>`).join('');
+
+    tooltip.innerHTML = `
+      <div class="chart-tooltip-title">${escapeHtml(label)}</div>
+      <div class="chart-tooltip-date">${escapeHtml(point.date)}</div>
+      <div class="chart-tooltip-value">
+        <span class="chart-tooltip-swatch" style="background:${color}"></span>
+        <span>${escapeHtml(config.metricLabel)}</span>
+        <strong>${escapeHtml(config.formatter(value))}</strong>
+      </div>
+      ${tooltipRows}
+    `;
+    tooltip.hidden = false;
+    guideLine.setAttribute('x1', x);
+    guideLine.setAttribute('x2', x);
+    guideLine.hidden = false;
+    positionTooltip(pointLookup.get(pointId));
+    updateSeriesState(pointId);
+  };
+
+  const hideTooltip = () => {
+    activePointId = null;
+    tooltip.hidden = true;
+    guideLine.hidden = true;
+    updateSeriesState(null);
+  };
+
+  target.querySelectorAll('.chart-point-hit').forEach((pointNode) => {
+    pointNode.addEventListener('mouseenter', () => {
+      showTooltip(pointNode.dataset.pointId);
+    });
+    pointNode.addEventListener('mousemove', () => {
+      if (activePointId) {
+        positionTooltip(pointLookup.get(activePointId));
+      }
+    });
+    pointNode.addEventListener('mouseleave', hideTooltip);
+    pointNode.addEventListener('focus', () => {
+      showTooltip(pointNode.dataset.pointId);
+    });
+    pointNode.addEventListener('blur', hideTooltip);
+    pointNode.addEventListener('click', () => {
+      showTooltip(pointNode.dataset.pointId);
+    });
+  });
+
+  shell.addEventListener('mouseleave', hideTooltip);
 }
 
 function getSeriesSuccessRate(item) {

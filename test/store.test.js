@@ -94,6 +94,11 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
   assert.equal(dashboard.daily_by_app[1].points[1].total, 2);
   assert.equal(dashboard.providers[0].provider, 'openai');
   assert.equal(dashboard.providers[0].total, 3);
+  assert.equal(dashboard.nat_providers.length, 1);
+  assert.equal(dashboard.nat_providers[0].provider, 'openai');
+  assert.equal(dashboard.nat_providers[0].total, 1);
+  assert.equal(dashboard.nat_providers[0].success_rate, 100);
+  assert.equal(dashboard.nat_providers[0].avg_duration_ms, 999);
   assert.ok(!dashboard.apps.some((item) => item.app === 'nat'));
   assert.ok(!dashboard.users.some((item) => item.app === 'nat'));
   assert.ok(!dashboard.daily_by_app.some((item) => item.app === 'nat'));
