@@ -62,16 +62,33 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (route === 'GET /api/dashboard-summary') {
+      sendJson(res, 200, store.getDashboardSummary(getDashboardInput(requestUrl.searchParams)));
+      return;
+    }
+
+    if (route === 'GET /api/dashboard-trends') {
+      sendJson(res, 200, store.getDashboardTrends(getDashboardInput(requestUrl.searchParams)));
+      return;
+    }
+
+    if (route === 'GET /api/dashboard-providers') {
+      sendJson(res, 200, store.getDashboardProviders(getDashboardInput(requestUrl.searchParams)));
+      return;
+    }
+
+    if (route === 'GET /api/dashboard-apps') {
+      sendJson(res, 200, store.getDashboardApps(getDashboardInput(requestUrl.searchParams)));
+      return;
+    }
+
+    if (route === 'GET /api/dashboard-nat-providers') {
+      sendJson(res, 200, store.getDashboardNatProviders(getDashboardInput(requestUrl.searchParams)));
+      return;
+    }
+
     if (route === 'GET /api/dashboard-data') {
-      const result = store.getDashboardData({
-        from: requestUrl.searchParams.get('from'),
-        to: requestUrl.searchParams.get('to'),
-        app: requestUrl.searchParams.get('app'),
-        provider: requestUrl.searchParams.get('provider'),
-        username: requestUrl.searchParams.get('username'),
-        app_version: requestUrl.searchParams.get('app_version'),
-        success: requestUrl.searchParams.get('success')
-      });
+      const result = store.getDashboardData(getDashboardInput(requestUrl.searchParams));
       sendJson(res, 200, result);
       return;
     }
@@ -168,4 +185,16 @@ async function readJsonBody(req) {
   }
 
   return JSON.parse(body);
+}
+
+function getDashboardInput(searchParams) {
+  return {
+    from: searchParams.get('from'),
+    to: searchParams.get('to'),
+    app: searchParams.get('app'),
+    provider: searchParams.get('provider'),
+    username: searchParams.get('username'),
+    app_version: searchParams.get('app_version'),
+    success: searchParams.get('success')
+  };
 }

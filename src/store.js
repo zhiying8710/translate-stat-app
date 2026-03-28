@@ -124,27 +124,7 @@ class StatsStore {
   }
 
   getDashboardData(input = {}) {
-    this.cleanupOldDatabases();
-
-    const range = resolveDateRange({
-      from: input.from,
-      to: input.to,
-      timeZone: this.timeZone,
-      retentionDays: this.retentionDays,
-      now: this.nowProvider()
-    });
-
-    const filters = {
-      app: normalizeOptionalString(input.app),
-      provider: normalizeOptionalString(input.provider),
-      username: normalizeOptionalString(input.username),
-      app_version: normalizeOptionalString(input.app_version),
-      success: parseOptionalSuccess(input.success)
-    };
-
-    const rows = this.readRows(filters, range);
-    const metricRows = excludeNatFromStats(rows);
-    const natRows = rows.filter((row) => isNatApp(row.app));
+    const { range, filters, rows, metricRows, natRows } = createDashboardContext(this, input);
     const daily = buildDailySeries(metricRows, range, this.timeZone);
     const daily_by_app = buildDailySeriesByApp(metricRows, range, this.timeZone);
     const provider_hourly = buildHourlySeriesByProvider(metricRows, range, this.timeZone);
@@ -185,6 +165,77 @@ class StatsStore {
       apps,
       users,
       versions
+    };
+  }
+
+  getDashboardSummary(input = {}) {
+    const { range, filters, metricRows } = createDashboardContext(this, input);
+
+    return {
+      range,
+      filters,
+      summary: buildSummary(metricRows)
+    };
+  }
+
+  getDashboardTrends(input = {}) {
+    const { range, filters, metricRows } = createDashboardContext(this, input);
+
+    return {
+      range,
+      filters,
+      daily_by_app: buildDailySeriesByApp(metricRows, range, this.timeZone)
+    };
+  }
+
+  getDashboardProviders(input = {}) {
+    const { range, filters, metricRows } = createDashboardContext(this, input);
+
+    return {
+      range,
+      filters,
+      provider_hourly: buildHourlySeriesByProvider(metricRows, range, this.timeZone),
+      providers: buildAggregate(metricRows, 'provider', 'provider')
+    };
+  }
+
+  getDashboardApps(input = {}) {
+    const { range, filters, rows, metricRows } = createDashboardContext(this, input);
+
+    return {
+      range,
+      filters,
+      apps: buildAggregate(metricRows, 'app', 'app'),
+      users: buildCompositeAggregate(metricRows, {
+        outputKeyName: 'app_username',
+        identity: (row) => `${row.app}::${row.username}`,
+        fields: (row) => ({
+          app: row.app,
+          username: row.username,
+          app_username: `${row.app} / ${row.username}`,
+          label: `${row.app} / ${row.username}`
+        })
+      }),
+      versions: buildCompositeAggregate(rows, {
+        outputKeyName: 'app_app_version',
+        identity: (row) => `${row.app}::${row.app_version}`,
+        fields: (row) => ({
+          app: row.app,
+          app_version: row.app_version,
+          app_app_version: `${row.app} / ${row.app_version}`,
+          label: `${row.app} / ${row.app_version}`
+        })
+      })
+    };
+  }
+
+  getDashboardNatProviders(input = {}) {
+    const { range, filters, natRows } = createDashboardContext(this, input);
+
+    return {
+      range,
+      filters,
+      nat_providers: buildAggregate(natRows, 'provider', 'provider')
     };
   }
 
@@ -440,6 +491,36 @@ function parseTimestamp(value, fieldName) {
   }
 
   return Math.round(numericTimestamp);
+}
+
+function createDashboardContext(store, input = {}) {
+  store.cleanupOldDatabases();
+
+  const range = resolveDateRange({
+    from: input.from,
+    to: input.to,
+    timeZone: store.timeZone,
+    retentionDays: store.retentionDays,
+    now: store.nowProvider()
+  });
+
+  const filters = {
+    app: normalizeOptionalString(input.app),
+    provider: normalizeOptionalString(input.provider),
+    username: normalizeOptionalString(input.username),
+    app_version: normalizeOptionalString(input.app_version),
+    success: parseOptionalSuccess(input.success)
+  };
+
+  const rows = store.readRows(filters, range);
+
+  return {
+    range,
+    filters,
+    rows,
+    metricRows: excludeNatFromStats(rows),
+    natRows: rows.filter((row) => isNatApp(row.app))
+  };
 }
 
 function excludeNatFromStats(rows) {

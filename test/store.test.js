@@ -115,6 +115,19 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
   assert.equal(dashboard.versions[0].total, 2);
   assert.ok(dashboard.versions.some((item) => item.label === 'web-app / 1.0.0' && item.total === 1));
 
+  const summarySection = store.getDashboardSummary({ from: '2026-03-25', to: '2026-03-26' });
+  const trendSection = store.getDashboardTrends({ from: '2026-03-25', to: '2026-03-26' });
+  const providerSection = store.getDashboardProviders({ from: '2026-03-25', to: '2026-03-26' });
+  const appSection = store.getDashboardApps({ from: '2026-03-25', to: '2026-03-26' });
+  const natSection = store.getDashboardNatProviders({ from: '2026-03-25', to: '2026-03-26' });
+
+  assert.equal(summarySection.summary.total, 4);
+  assert.deepEqual(trendSection.daily_by_app.map((item) => item.app), ['desktop-app', 'web-app']);
+  assert.equal(providerSection.providers[0].provider, 'openai');
+  assert.equal(providerSection.provider_hourly[0].provider, 'openai');
+  assert.equal(appSection.apps[0].app, 'desktop-app');
+  assert.equal(natSection.nat_providers[0].provider, 'openai');
+
   store.close();
 });
 

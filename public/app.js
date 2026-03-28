@@ -1,6 +1,17 @@
+const DASHBOARD_ENDPOINTS = {
+  summary: '/api/dashboard-summary',
+  trends: '/api/dashboard-trends',
+  provider: '/api/dashboard-providers',
+  app: '/api/dashboard-apps',
+  nat: '/api/dashboard-nat-providers'
+};
+
 const state = {
   options: null,
-  dashboard: null,
+  dashboard: createDashboardState(),
+  dashboardStatus: createDashboardSectionState('idle'),
+  dashboardErrors: createDashboardSectionState(null),
+  activeDashboardRequestId: 0,
   chartSelections: {
     dailyTotal: null,
     dailySuccess: null,
@@ -31,39 +42,93 @@ const elements = {
   healthText: document.querySelector('#health-text'),
   retentionText: document.querySelector('#retention-text'),
   timezoneText: document.querySelector('#timezone-text'),
-  loadingOverlay: document.querySelector('#loading-overlay')
+  loadingOverlay: document.querySelector('#loading-overlay'),
+  summaryTotal: document.querySelector('#summary-total'),
+  summarySuccessRate: document.querySelector('#summary-success-rate'),
+  summaryDuration: document.querySelector('#summary-duration'),
+  summaryApps: document.querySelector('#summary-apps'),
+  summaryProviders: document.querySelector('#summary-providers'),
+  summaryUsers: document.querySelector('#summary-users'),
+  dailyTotalChart: document.querySelector('#daily-total-chart'),
+  dailySuccessChart: document.querySelector('#daily-success-chart'),
+  providerChart: document.querySelector('#provider-chart'),
+  providerHourlyChart: document.querySelector('#provider-hourly-chart'),
+  appChart: document.querySelector('#app-chart'),
+  userChart: document.querySelector('#user-chart'),
+  versionChart: document.querySelector('#version-chart'),
+  natProviderChart: document.querySelector('#nat-provider-chart'),
+  providerTable: document.querySelector('#provider-table'),
+  appTable: document.querySelector('#app-table'),
+  natProviderTable: document.querySelector('#nat-provider-table')
+};
+
+const dashboardPanels = {
+  summary: [
+    elements.summaryTotal.closest('.summary-card'),
+    elements.summarySuccessRate.closest('.summary-card'),
+    elements.summaryDuration.closest('.summary-card'),
+    elements.summaryApps.closest('.summary-card'),
+    elements.summaryProviders.closest('.summary-card'),
+    elements.summaryUsers.closest('.summary-card')
+  ].filter(Boolean),
+  trends: [
+    elements.dailyTotalChart.closest('.card'),
+    elements.dailySuccessChart.closest('.card')
+  ].filter(Boolean),
+  provider: [
+    elements.providerHourlyChart.closest('.card'),
+    elements.providerChart.closest('.card'),
+    elements.providerTable.closest('.card')
+  ].filter(Boolean),
+  app: [
+    elements.appChart.closest('.card'),
+    elements.userChart.closest('.card'),
+    elements.versionChart.closest('.card'),
+    elements.appTable.closest('.card')
+  ].filter(Boolean),
+  nat: [
+    elements.natProviderChart.closest('.card'),
+    elements.natProviderTable.closest('.card')
+  ].filter(Boolean)
 };
 
 bootstrap().catch((error) => {
   console.error(error);
-  setLoading(false);
-  elements.healthText.textContent = '加载失败';
+  setPageLoading(false);
+  setRefreshLoading(false);
+  for (const sectionKey of Object.keys(DASHBOARD_ENDPOINTS)) {
+    renderSectionError(sectionKey, error);
+    setSectionLoading(sectionKey, false);
+  }
 });
 
 async function bootstrap() {
-  setLoading(true);
+  setPageLoading(true);
 
   try {
     void loadHealth();
     await loadOptions();
-    await loadDashboard();
   } finally {
-    setLoading(false);
+    setPageLoading(false);
   }
 
   elements.apply.addEventListener('click', async () => {
     await refreshDashboard({ preserveSelections: true });
   });
+
+  await refreshDashboard({ preserveSelections: true, skipOptions: true });
 }
 
-async function refreshDashboard({ preserveSelections = false } = {}) {
-  setLoading(true);
+async function refreshDashboard({ preserveSelections = false, skipOptions = false } = {}) {
+  setRefreshLoading(true);
 
   try {
-    await loadOptions({ preserveSelections });
-    await loadDashboard();
+    if (!skipOptions) {
+      await loadOptions({ preserveSelections });
+    }
+    await loadDashboardSections();
   } finally {
-    setLoading(false);
+    setRefreshLoading(false);
   }
 }
 
@@ -108,7 +173,38 @@ async function loadOptions({ preserveSelections = false } = {}) {
   elements.success.value = previousSelections.success || elements.success.value || 'all';
 }
 
-async function loadDashboard() {
+async function loadDashboardSections() {
+  const requestId = ++state.activeDashboardRequestId;
+  const params = buildDashboardParams();
+  const tasks = Object.entries(DASHBOARD_ENDPOINTS).map(([sectionKey, endpoint]) => {
+    startSectionLoading(sectionKey);
+    return loadDashboardSection(sectionKey, endpoint, params, requestId);
+  });
+
+  await Promise.allSettled(tasks);
+}
+
+function createDashboardState() {
+  return {
+    summary: null,
+    trends: null,
+    provider: null,
+    app: null,
+    nat: null
+  };
+}
+
+function createDashboardSectionState(initialValue) {
+  return {
+    summary: initialValue,
+    trends: initialValue,
+    provider: initialValue,
+    app: initialValue,
+    nat: initialValue
+  };
+}
+
+function buildDashboardParams() {
   const params = new URLSearchParams();
   const selections = getSelections();
 
@@ -118,89 +214,259 @@ async function loadDashboard() {
     }
   }
 
-  const data = await fetchJson(`/api/dashboard-data?${params.toString()}`);
-  state.dashboard = data;
+  return params;
+}
 
-  renderDashboardViews();
+async function loadDashboardSection(sectionKey, endpoint, params, requestId) {
+  const query = params.toString();
+
+  try {
+    const data = await fetchJson(query ? `${endpoint}?${query}` : endpoint);
+    if (requestId !== state.activeDashboardRequestId) {
+      return;
+    }
+
+    state.dashboard[sectionKey] = data;
+    state.dashboardStatus[sectionKey] = 'ready';
+    state.dashboardErrors[sectionKey] = null;
+    renderDashboardViews();
+    setSectionLoading(sectionKey, false);
+  } catch (error) {
+    if (requestId !== state.activeDashboardRequestId) {
+      return;
+    }
+
+    console.error(error);
+    state.dashboardStatus[sectionKey] = 'error';
+    state.dashboardErrors[sectionKey] = error;
+    if (!state.dashboard[sectionKey]) {
+      renderSectionError(sectionKey, error);
+    }
+    setSectionLoading(sectionKey, false);
+  }
+}
+
+function startSectionLoading(sectionKey) {
+  state.dashboardStatus[sectionKey] = 'loading';
+  state.dashboardErrors[sectionKey] = null;
+  setSectionLoading(sectionKey, true);
+
+  if (!state.dashboard[sectionKey]) {
+    renderSectionLoading(sectionKey);
+  }
+}
+
+function setSectionLoading(sectionKey, isLoading) {
+  for (const panel of dashboardPanels[sectionKey] || []) {
+    panel.classList.toggle('is-panel-loading', isLoading);
+  }
 }
 
 function renderDashboardViews() {
-  const data = state.dashboard;
-  if (!data) {
+  if (state.dashboard.summary) {
+    renderSummary(state.dashboard.summary.summary);
+  }
+
+  if (state.dashboard.trends) {
+    renderMultiLineChart('#daily-total-chart', state.dashboard.trends.daily_by_app, {
+      selectionKey: 'dailyTotal',
+      valueKey: 'total',
+      metricLabel: '请求量',
+      formatter: (value) => value.toLocaleString(),
+      legendValue: (item) => Number(item.total || 0),
+      tooltipLines: (point) => [
+        `成功 ${Number(point.success_count || 0).toLocaleString()}`,
+        `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
+        `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
+      ]
+    });
+    renderMultiLineChart('#daily-success-chart', state.dashboard.trends.daily_by_app, {
+      selectionKey: 'dailySuccess',
+      valueKey: 'success_rate',
+      metricLabel: '成功率',
+      maxDomainValue: 100,
+      tickValues: [0, 25, 50, 75, 100],
+      formatter: (value) => `${value.toFixed(2)}%`,
+      legendValue: (item) => getSeriesSuccessRate(item),
+      tooltipLines: (point) => [
+        `成功 ${Number(point.success_count || 0).toLocaleString()} / 总计 ${Number(point.total || 0).toLocaleString()}`,
+        `失败 ${Number(point.failure_count || 0).toLocaleString()}`
+      ]
+    });
+  }
+
+  if (state.dashboard.provider) {
+    renderMultiLineChart('#provider-hourly-chart', state.dashboard.provider.provider_hourly.slice(0, 6), {
+      selectionKey: 'providerHourly',
+      seriesKey: 'provider',
+      seriesLabel: 'Provider',
+      valueKey: 'total',
+      metricLabel: '调用量',
+      width: 920,
+      xTickCount: 8,
+      formatter: (value) => value.toLocaleString(),
+      legendValue: (item) => Number(item.total || 0),
+      tooltipLines: (point) => [
+        `成功 ${Number(point.success_count || 0).toLocaleString()}`,
+        `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
+        `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
+      ]
+    });
+    renderStackedBars('#provider-chart', state.dashboard.provider.providers.slice(0, 8));
+    renderTable('#provider-table', state.dashboard.provider.providers.slice(0, 12), 'provider');
+  }
+
+  if (state.dashboard.app) {
+    renderBars('#app-chart', state.dashboard.app.apps.slice(0, 8), {
+      labelKey: 'app',
+      valueKey: 'total',
+      valueFormatter: (value) => `${value} 次`,
+      color: '#1d4ed8'
+    });
+    renderCompositeBars('#user-chart', state.dashboard.app.users.slice(0, 8), {
+      primaryKey: 'app',
+      secondaryKey: 'username',
+      primaryLabel: 'App',
+      secondaryLabel: '用户',
+      valueKey: 'total',
+      valueFormatter: (value) => `${value} 次`,
+      color: '#7c3aed'
+    });
+    renderCompositeBars('#version-chart', state.dashboard.app.versions.slice(0, 8), {
+      primaryKey: 'app',
+      secondaryKey: 'app_version',
+      primaryLabel: 'App',
+      secondaryLabel: '版本',
+      valueKey: 'avg_duration_ms',
+      valueFormatter: (value) => `${value.toFixed(2)} ms`,
+      color: '#be123c'
+    });
+    renderTable('#app-table', state.dashboard.app.apps.slice(0, 12), 'app');
+  }
+
+  if (state.dashboard.nat) {
+    renderStackedBars('#nat-provider-chart', state.dashboard.nat.nat_providers.slice(0, 8));
+    renderTable('#nat-provider-table', state.dashboard.nat.nat_providers.slice(0, 12), 'provider');
+  }
+}
+
+function renderSectionLoading(sectionKey) {
+  if (sectionKey === 'summary') {
+    renderSummaryLoading();
     return;
   }
 
-  renderSummary(data.summary);
-  renderMultiLineChart('#daily-total-chart', data.daily_by_app, {
-    selectionKey: 'dailyTotal',
-    valueKey: 'total',
-    metricLabel: '请求量',
-    formatter: (value) => value.toLocaleString(),
-    legendValue: (item) => Number(item.total || 0),
-    tooltipLines: (point) => [
-      `成功 ${Number(point.success_count || 0).toLocaleString()}`,
-      `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
-      `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
-    ]
-  });
-  renderMultiLineChart('#daily-success-chart', data.daily_by_app, {
-    selectionKey: 'dailySuccess',
-    valueKey: 'success_rate',
-    metricLabel: '成功率',
-    maxDomainValue: 100,
-    tickValues: [0, 25, 50, 75, 100],
-    formatter: (value) => `${value.toFixed(2)}%`,
-    legendValue: (item) => getSeriesSuccessRate(item),
-    tooltipLines: (point) => [
-      `成功 ${Number(point.success_count || 0).toLocaleString()} / 总计 ${Number(point.total || 0).toLocaleString()}`,
-      `失败 ${Number(point.failure_count || 0).toLocaleString()}`
-    ]
-  });
-  renderMultiLineChart('#provider-hourly-chart', data.provider_hourly.slice(0, 6), {
-    selectionKey: 'providerHourly',
-    seriesKey: 'provider',
-    seriesLabel: 'Provider',
-    valueKey: 'total',
-    metricLabel: '调用量',
-    width: 920,
-    xTickCount: 8,
-    formatter: (value) => value.toLocaleString(),
-    legendValue: (item) => Number(item.total || 0),
-    tooltipLines: (point) => [
-      `成功 ${Number(point.success_count || 0).toLocaleString()}`,
-      `失败 ${Number(point.failure_count || 0).toLocaleString()}`,
-      `成功率 ${Number(point.success_rate || 0).toFixed(2)}%`
-    ]
-  });
-  renderStackedBars('#provider-chart', data.providers.slice(0, 8));
-  renderStackedBars('#nat-provider-chart', data.nat_providers.slice(0, 8));
-  renderBars('#app-chart', data.apps.slice(0, 8), {
-    labelKey: 'app',
-    valueKey: 'total',
-    valueFormatter: (value) => `${value} 次`,
-    color: '#1d4ed8'
-  });
-  renderCompositeBars('#user-chart', data.users.slice(0, 8), {
-    primaryKey: 'app',
-    secondaryKey: 'username',
-    primaryLabel: 'App',
-    secondaryLabel: '用户',
-    valueKey: 'total',
-    valueFormatter: (value) => `${value} 次`,
-    color: '#7c3aed'
-  });
-  renderCompositeBars('#version-chart', data.versions.slice(0, 8), {
-    primaryKey: 'app',
-    secondaryKey: 'app_version',
-    primaryLabel: 'App',
-    secondaryLabel: '版本',
-    valueKey: 'avg_duration_ms',
-    valueFormatter: (value) => `${value.toFixed(2)} ms`,
-    color: '#be123c'
-  });
-  renderTable('#provider-table', data.providers.slice(0, 12), 'provider');
-  renderTable('#nat-provider-table', data.nat_providers.slice(0, 12), 'provider');
-  renderTable('#app-table', data.apps.slice(0, 12), 'app');
+  if (sectionKey === 'trends') {
+    renderLoadingPlaceholder(elements.dailyTotalChart, 'chart');
+    renderLoadingPlaceholder(elements.dailySuccessChart, 'chart');
+    return;
+  }
+
+  if (sectionKey === 'provider') {
+    renderLoadingPlaceholder(elements.providerHourlyChart, 'chart');
+    renderLoadingPlaceholder(elements.providerChart, 'bar');
+    renderLoadingPlaceholder(elements.providerTable, 'table');
+    return;
+  }
+
+  if (sectionKey === 'app') {
+    renderLoadingPlaceholder(elements.appChart, 'bar');
+    renderLoadingPlaceholder(elements.userChart, 'bar');
+    renderLoadingPlaceholder(elements.versionChart, 'bar');
+    renderLoadingPlaceholder(elements.appTable, 'table');
+    return;
+  }
+
+  if (sectionKey === 'nat') {
+    renderLoadingPlaceholder(elements.natProviderChart, 'bar');
+    renderLoadingPlaceholder(elements.natProviderTable, 'table');
+  }
+}
+
+function renderSectionError(sectionKey, error) {
+  const message = error?.message || '加载失败，请稍后重试';
+
+  if (sectionKey === 'summary') {
+    setSummaryValues('加载失败');
+    return;
+  }
+
+  if (sectionKey === 'trends') {
+    renderErrorState(elements.dailyTotalChart, message);
+    renderErrorState(elements.dailySuccessChart, message);
+    return;
+  }
+
+  if (sectionKey === 'provider') {
+    renderErrorState(elements.providerHourlyChart, message);
+    renderErrorState(elements.providerChart, message);
+    renderErrorState(elements.providerTable, message);
+    return;
+  }
+
+  if (sectionKey === 'app') {
+    renderErrorState(elements.appChart, message);
+    renderErrorState(elements.userChart, message);
+    renderErrorState(elements.versionChart, message);
+    renderErrorState(elements.appTable, message);
+    return;
+  }
+
+  if (sectionKey === 'nat') {
+    renderErrorState(elements.natProviderChart, message);
+    renderErrorState(elements.natProviderTable, message);
+  }
+}
+
+function renderLoadingPlaceholder(target, variant = 'chart') {
+  if (variant === 'chart') {
+    target.innerHTML = `
+      <div class="panel-placeholder panel-placeholder-chart" aria-hidden="true">
+        <span class="placeholder-column" style="--column-height: 42%"></span>
+        <span class="placeholder-column" style="--column-height: 68%"></span>
+        <span class="placeholder-column" style="--column-height: 54%"></span>
+        <span class="placeholder-column" style="--column-height: 82%"></span>
+        <span class="placeholder-column" style="--column-height: 66%"></span>
+        <span class="placeholder-column" style="--column-height: 76%"></span>
+        <span class="placeholder-column" style="--column-height: 58%"></span>
+        <span class="placeholder-column" style="--column-height: 88%"></span>
+      </div>
+    `;
+    return;
+  }
+
+  const widths = variant === 'table'
+    ? [100, 94, 98, 90, 96]
+    : [96, 88, 92, 82, 86, 74];
+  const lines = widths.map((width) => `<span class="placeholder-line" style="--line-width:${width}%"></span>`).join('');
+  target.innerHTML = `<div class="panel-placeholder panel-placeholder-${variant}" aria-hidden="true">${lines}</div>`;
+}
+
+function renderErrorState(target, message) {
+  target.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
+}
+
+function renderSummaryLoading() {
+  for (const summaryElement of getSummaryValueElements()) {
+    summaryElement.innerHTML = '<span class="summary-skeleton" aria-hidden="true"></span>';
+  }
+}
+
+function setSummaryValues(value) {
+  for (const summaryElement of getSummaryValueElements()) {
+    summaryElement.textContent = value;
+  }
+}
+
+function getSummaryValueElements() {
+  return [
+    elements.summaryTotal,
+    elements.summarySuccessRate,
+    elements.summaryDuration,
+    elements.summaryApps,
+    elements.summaryProviders,
+    elements.summaryUsers
+  ];
 }
 
 function getSelections() {
@@ -234,18 +500,21 @@ function fillSelect(selectElement, options, selectedValue) {
 }
 
 function renderSummary(summary) {
-  document.querySelector('#summary-total').textContent = summary.total.toLocaleString();
-  document.querySelector('#summary-success-rate').textContent = `${summary.success_rate.toFixed(2)}%`;
-  document.querySelector('#summary-duration').textContent = `${summary.avg_duration_ms.toFixed(2)} ms`;
-  document.querySelector('#summary-apps').textContent = summary.unique_apps.toLocaleString();
-  document.querySelector('#summary-providers').textContent = summary.unique_providers.toLocaleString();
-  document.querySelector('#summary-users').textContent = summary.unique_users.toLocaleString();
+  elements.summaryTotal.textContent = summary.total.toLocaleString();
+  elements.summarySuccessRate.textContent = `${summary.success_rate.toFixed(2)}%`;
+  elements.summaryDuration.textContent = `${summary.avg_duration_ms.toFixed(2)} ms`;
+  elements.summaryApps.textContent = summary.unique_apps.toLocaleString();
+  elements.summaryProviders.textContent = summary.unique_providers.toLocaleString();
+  elements.summaryUsers.textContent = summary.unique_users.toLocaleString();
 }
 
-function setLoading(isLoading) {
+function setPageLoading(isLoading) {
   document.body.classList.toggle('is-loading', isLoading);
   elements.loadingOverlay.hidden = !isLoading;
   elements.loadingOverlay.style.display = isLoading ? 'grid' : 'none';
+}
+
+function setRefreshLoading(isLoading) {
   elements.apply.disabled = isLoading;
   elements.apply.textContent = isLoading ? '加载中...' : '刷新看板';
 }
