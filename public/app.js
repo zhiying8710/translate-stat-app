@@ -133,12 +133,14 @@ function renderDashboardViews() {
   renderMultiLineChart('#daily-total-chart', data.daily_by_app, {
     selectionKey: 'dailyTotal',
     valueKey: 'total',
-    formatter: (value) => value.toLocaleString()
+    formatter: (value) => value.toLocaleString(),
+    legendValue: (item) => Number(item.total || 0)
   });
   renderMultiLineChart('#daily-success-chart', data.daily_by_app, {
     selectionKey: 'dailySuccess',
     valueKey: 'success_rate',
-    formatter: (value) => `${value.toFixed(2)}%`
+    formatter: (value) => `${value.toFixed(2)}%`,
+    legendValue: (item) => getSeriesSuccessRate(item)
   });
   renderStackedBars('#provider-chart', data.providers.slice(0, 8));
   renderBars('#app-chart', data.apps.slice(0, 8), {
@@ -281,8 +283,10 @@ function renderMultiLineChart(selector, series, config) {
 
   const legend = series.map((item, itemIndex) => {
     const color = CHART_COLORS[itemIndex % CHART_COLORS.length];
-    const lastPoint = item.points[item.points.length - 1];
     const isActive = !selectedApp || selectedApp === item.app;
+    const legendValue = typeof config.legendValue === 'function'
+      ? config.legendValue(item)
+      : Number(item.points[item.points.length - 1]?.[config.valueKey] || 0);
     return `
       <button
         type="button"
@@ -293,13 +297,13 @@ function renderMultiLineChart(selector, series, config) {
       >
         <span class="legend-dot" style="background:${color}"></span>
         <span>${escapeHtml(item.label)}</span>
-        <strong>${config.formatter(Number(lastPoint[config.valueKey] || 0))}</strong>
+        <strong>${config.formatter(Number(legendValue || 0))}</strong>
       </button>
     `;
   }).join('');
 
   target.innerHTML = `
-    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，再次点击可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线，点击图例可单独查看某个 App`}</div>
+    <div class="chart-caption">${selectedApp ? `已聚焦 ${escapeHtml(selectedApp)}，再次点击可恢复全部 App` : `按 App 分线展示，共 ${series.length} 条曲线，图例数值为当前筛选范围内汇总，点击图例可单独查看某个 App`}</div>
     <div class="chart-legend">${legend}</div>
     <svg viewBox="0 0 ${width} ${height}" class="line-chart" role="img">
       ${yTicks}
@@ -315,6 +319,20 @@ function renderMultiLineChart(selector, series, config) {
       renderDashboardViews();
     });
   });
+}
+
+function getSeriesSuccessRate(item) {
+  const totals = item.points.reduce((accumulator, point) => {
+    accumulator.total += Number(point.total || 0);
+    accumulator.successCount += Number(point.success_count || 0);
+    return accumulator;
+  }, { total: 0, successCount: 0 });
+
+  if (totals.total === 0) {
+    return 0;
+  }
+
+  return Number(((totals.successCount / totals.total) * 100).toFixed(2));
 }
 
 function renderStackedBars(selector, rows) {
