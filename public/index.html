@@ -49,7 +49,7 @@
         }
       }
     </style>
-    <link rel="stylesheet" href="/styles.css?v=20260328-4" />
+    <link rel="stylesheet" href="/styles.css?v=20260330-1" />
   </head>
   <body class="is-loading">
     <div id="loading-overlay" class="loading-overlay" aria-live="polite" aria-busy="true">
@@ -121,6 +121,11 @@
           <div class="filter-actions">
             <button id="apply-filters" class="primary-btn">刷新看板</button>
           </div>
+        </div>
+        <div class="filter-note" aria-live="polite">
+          <span class="filter-note-label">当前数据窗口</span>
+          <strong id="data-window-text">等待加载...</strong>
+          <span id="data-days-text">正在同步可用数据范围</span>
         </div>
       </section>
 
@@ -254,6 +259,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=20260328-4"></script>
+    <script src="/app.js?v=20260330-1"></script>
   </body>
 </html>

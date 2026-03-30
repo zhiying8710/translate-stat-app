@@ -86,6 +86,10 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
   assert.equal(dashboard.summary.success_count, 3);
   assert.equal(dashboard.summary.failure_count, 1);
   assert.equal(dashboard.summary.success_rate, 75);
+  assert.deepEqual(dashboard.options.apps, ['desktop-app', 'nat', 'web-app']);
+  assert.deepEqual(dashboard.options.providers, ['deepl', 'openai']);
+  assert.deepEqual(dashboard.options.usernames, ['alice', 'bob', 'system']);
+  assert.deepEqual(dashboard.options.app_versions, ['1.0.0', '2.1.0', '9.9.9']);
   assert.equal(dashboard.daily.length, 2);
   assert.deepEqual(dashboard.daily_by_app.map((item) => item.app), ['desktop-app', 'web-app']);
   assert.equal(dashboard.daily_by_app[0].points[0].total, 2);
@@ -127,6 +131,15 @@ test('insertEvents writes to daily sqlite files and aggregates correctly', () =>
   assert.equal(providerSection.provider_hourly[0].provider, 'openai');
   assert.equal(appSection.apps[0].app, 'desktop-app');
   assert.equal(natSection.nat_providers[0].provider, 'openai');
+
+  const filteredDashboard = store.getDashboardData({
+    from: '2026-03-25',
+    to: '2026-03-26',
+    app: 'desktop-app'
+  });
+
+  assert.equal(filteredDashboard.summary.total, 2);
+  assert.deepEqual(filteredDashboard.options.apps, ['desktop-app', 'nat', 'web-app']);
 
   store.close();
 });

@@ -89,7 +89,13 @@ const server = http.createServer(async (req, res) => {
 
     if (route === 'GET /api/dashboard-data') {
       const result = store.getDashboardData(getDashboardInput(requestUrl.searchParams));
-      sendJson(res, 200, result);
+      sendJson(res, 200, {
+        ...result,
+        meta: {
+          time_zone: TIME_ZONE,
+          retention_days: RETENTION_DAYS
+        }
+      });
       return;
     }
 

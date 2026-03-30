@@ -1,5 +1,6 @@
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_LOOKBACK_DAYS = 7;
+const dateFormatterCache = new Map();
 
 function isValidDateKey(value) {
   return typeof value === 'string' && DATE_KEY_PATTERN.test(value);
@@ -51,16 +52,9 @@ function dateKeyFromTimestamp(timestamp, timeZone) {
     throw new Error(`Invalid timestamp: ${timestamp}`);
   }
 
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-
+  const formatter = getDateFormatter(timeZone);
   const parts = formatter.formatToParts(date);
-  const mapped = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${mapped.year}-${mapped.month}-${mapped.day}`;
+  return formatDateParts(parts);
 }
 
 function resolveDateRange({ from, to, timeZone, retentionDays, now = Date.now() }) {
@@ -108,6 +102,24 @@ function findStartOfDateKey(targetDateKey, timeZone) {
   }
 
   return low;
+}
+
+function getDateFormatter(timeZone) {
+  if (!dateFormatterCache.has(timeZone)) {
+    dateFormatterCache.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }));
+  }
+
+  return dateFormatterCache.get(timeZone);
+}
+
+function formatDateParts(parts) {
+  const mapped = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${mapped.year}-${mapped.month}-${mapped.day}`;
 }
 
 module.exports = {

@@ -12,6 +12,7 @@ const {
 
 const DATABASE_PREFIX = 'translate-stats-';
 const DATABASE_SUFFIX = '.sqlite';
+const hourFormatterCache = new Map();
 
 class ValidationError extends Error {
   constructor(message, details = []) {
@@ -29,6 +30,7 @@ class StatsStore {
     this.retentionDays = retentionDays;
     this.nowProvider = nowProvider;
     this.connectionCache = new Map();
+    this.dateKeysCache = null;
   }
 
   initialize() {
@@ -98,20 +100,19 @@ class StatsStore {
       now: this.nowProvider()
     });
 
-    const rows = this.readRows({}, range);
     const apps = new Set();
     const providers = new Set();
     const usernames = new Set();
     const appVersions = new Set();
 
-    for (const row of rows) {
+    this.scanRows(range, {}, (row) => {
       apps.add(row.app);
       providers.add(row.provider);
       usernames.add(row.username);
       appVersions.add(row.app_version);
-    }
+    });
 
-    const availableDates = this.listDateKeys().filter((dateKey) => dateKey >= range.from && dateKey <= range.to);
+    const availableDates = this.listDateKeysForRange(range);
 
     return {
       range,
@@ -124,47 +125,102 @@ class StatsStore {
   }
 
   getDashboardData(input = {}) {
-    const { range, filters, rows, metricRows, natRows } = createDashboardContext(this, input);
-    const daily = buildDailySeries(metricRows, range, this.timeZone);
-    const daily_by_app = buildDailySeriesByApp(metricRows, range, this.timeZone);
-    const provider_hourly = buildHourlySeriesByProvider(metricRows, range, this.timeZone);
-    const providers = buildAggregate(metricRows, 'provider', 'provider');
-    const nat_providers = buildAggregate(natRows, 'provider', 'provider');
-    const apps = buildAggregate(metricRows, 'app', 'app');
-    const users = buildCompositeAggregate(metricRows, {
-      outputKeyName: 'app_username',
-      identity: (row) => `${row.app}::${row.username}`,
-      fields: (row) => ({
-        app: row.app,
-        username: row.username,
-        app_username: `${row.app} / ${row.username}`,
-        label: `${row.app} / ${row.username}`
-      })
-    });
-    const versions = buildCompositeAggregate(rows, {
-      outputKeyName: 'app_app_version',
-      identity: (row) => `${row.app}::${row.app_version}`,
-      fields: (row) => ({
+    this.cleanupOldDatabases();
+    const { range, filters } = resolveDashboardQuery(this, input);
+    const dateKeys = enumerateDateKeys(range.from, range.to);
+    const recentFrom = range.from > shiftDateKey(range.to, -1)
+      ? range.from
+      : shiftDateKey(range.to, -1);
+    const hourKeys = enumerateHourKeys(recentFrom, range.to);
+    const dailySeries = createSeriesTemplate(dateKeys);
+    const dailyByApp = new Map();
+    const providerHourly = new Map();
+    const providers = new Map();
+    const natProviders = new Map();
+    const apps = new Map();
+    const users = new Map();
+    const versions = new Map();
+    const summaryAggregate = createAggregate();
+    const summaryApps = new Set();
+    const summaryProviders = new Set();
+    const summaryUsers = new Set();
+    const summaryVersions = new Set();
+    const optionApps = new Set();
+    const optionProviders = new Set();
+    const optionUsers = new Set();
+    const optionVersions = new Set();
+
+    this.scanRows(range, {}, (row) => {
+      optionApps.add(row.app);
+      optionProviders.add(row.provider);
+      optionUsers.add(row.username);
+      optionVersions.add(row.app_version);
+
+      if (!rowMatchesFilters(row, filters)) {
+        return;
+      }
+
+      updateMapAggregate(versions, `${row.app}::${row.app_version}`, {
         app: row.app,
         app_version: row.app_version,
         app_app_version: `${row.app} / ${row.app_version}`,
         label: `${row.app} / ${row.app_version}`
-      })
+      }, row);
+
+      if (isNatApp(row.app)) {
+        updateMapAggregate(natProviders, row.provider, { provider: row.provider }, row);
+        return;
+      }
+
+      updateAggregate(summaryAggregate, row);
+      summaryApps.add(row.app);
+      summaryProviders.add(row.provider);
+      summaryUsers.add(row.username);
+      summaryVersions.add(row.app_version);
+
+      const dateKey = dateKeyFromTimestamp(row.ts, this.timeZone);
+      updateExistingAggregate(dailySeries, dateKey, row);
+      updateSeriesAggregate(dailyByApp, row.app, dateKeys, dateKey, row);
+
+      if (dateKey >= recentFrom && dateKey <= range.to) {
+        const hourKey = hourKeyFromTimestamp(row.ts, this.timeZone);
+        updateSeriesAggregate(providerHourly, row.provider, hourKeys, hourKey, row);
+      }
+
+      updateMapAggregate(providers, row.provider, { provider: row.provider }, row);
+      updateMapAggregate(apps, row.app, { app: row.app }, row);
+      updateMapAggregate(users, `${row.app}::${row.username}`, {
+        app: row.app,
+        username: row.username,
+        app_username: `${row.app} / ${row.username}`,
+        label: `${row.app} / ${row.username}`
+      }, row);
     });
-    const summary = buildSummary(metricRows);
 
     return {
       range,
       filters,
-      summary,
-      daily,
-      daily_by_app,
-      provider_hourly,
-      providers,
-      nat_providers,
-      apps,
-      users,
-      versions
+      options: {
+        available_dates: this.listDateKeysForRange(range),
+        apps: sortValues(optionApps),
+        providers: sortValues(optionProviders),
+        usernames: sortValues(optionUsers),
+        app_versions: sortValues(optionVersions)
+      },
+      summary: finalizeSummaryAggregate(summaryAggregate, {
+        apps: summaryApps,
+        providers: summaryProviders,
+        users: summaryUsers,
+        versions: summaryVersions
+      }),
+      daily: finalizeSeries(dailySeries),
+      daily_by_app: finalizeSeriesGroups(dailyByApp, 'app'),
+      provider_hourly: finalizeSeriesGroups(providerHourly, 'provider'),
+      providers: finalizeAggregateGroups(providers, 'provider'),
+      nat_providers: finalizeAggregateGroups(natProviders, 'provider'),
+      apps: finalizeAggregateGroups(apps, 'app'),
+      users: finalizeAggregateGroups(users, 'app_username'),
+      versions: finalizeAggregateGroups(versions, 'app_app_version')
     };
   }
 
@@ -242,6 +298,7 @@ class StatsStore {
   cleanupOldDatabases(now = this.nowProvider()) {
     const today = dateKeyFromTimestamp(now, this.timeZone);
     const cutoff = shiftDateKey(today, -(this.retentionDays - 1));
+    let removed = false;
 
     for (const dateKey of this.listDateKeys()) {
       if (dateKey < cutoff) {
@@ -249,8 +306,13 @@ class StatsStore {
         const filePath = this.getDatabasePath(dateKey);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
+          removed = true;
         }
       }
+    }
+
+    if (removed) {
+      this.invalidateDateKeysCache();
     }
   }
 
@@ -272,44 +334,9 @@ class StatsStore {
 
   readRows(filters, range) {
     const rows = [];
-    const { startTs, endTsExclusive } = getRangeTimestamps(range.from, range.to, this.timeZone);
-
-    // Query all retained daily databases and rely on ts bounds for correctness.
-    // This keeps range queries accurate even if some historical rows were written
-    // into an adjacent day's file because of older partitioning logic.
-    for (const dateKey of this.listDateKeys()) {
-      const filePath = this.getDatabasePath(dateKey);
-      if (!fs.existsSync(filePath)) {
-        continue;
-      }
-
-      const connection = this.getConnection(dateKey);
-      const { whereClause, params } = buildWhereClause(filters, {
-        startTs,
-        endTsExclusive
-      });
-      const statement = connection.db.prepare(`
-        SELECT
-          app,
-          provider,
-          success,
-          duration_ms,
-          ts,
-          app_version,
-          username
-        FROM translation_stats
-        ${whereClause}
-        ORDER BY ts ASC
-      `);
-
-      const dayRows = statement.all(...params);
-      for (const row of dayRows) {
-        rows.push({
-          ...row,
-          success: Boolean(row.success)
-        });
-      }
-    }
+    this.scanRows(range, filters, (row) => {
+      rows.push(row);
+    });
 
     return rows;
   }
@@ -319,13 +346,26 @@ class StatsStore {
       return [];
     }
 
-    return fs.readdirSync(this.dataDir)
+    if (this.dateKeysCache) {
+      return this.dateKeysCache;
+    }
+
+    this.dateKeysCache = fs.readdirSync(this.dataDir)
       .map((fileName) => {
         const match = fileName.match(/^translate-stats-(\d{4}-\d{2}-\d{2})\.sqlite$/);
         return match ? match[1] : null;
       })
       .filter(Boolean)
       .sort();
+
+    return this.dateKeysCache;
+  }
+
+  listDateKeysForRange(range, spilloverDays = 0) {
+    const from = spilloverDays > 0 ? shiftDateKey(range.from, -spilloverDays) : range.from;
+    const to = spilloverDays > 0 ? shiftDateKey(range.to, spilloverDays) : range.to;
+
+    return this.listDateKeys().filter((dateKey) => dateKey >= from && dateKey <= to);
   }
 
   getDatabasePath(dateKey) {
@@ -338,6 +378,7 @@ class StatsStore {
     }
 
     const filePath = this.getDatabasePath(dateKey);
+    const existed = fs.existsSync(filePath);
     const db = new DatabaseSync(filePath);
     db.exec(`
       PRAGMA synchronous = NORMAL;
@@ -364,6 +405,7 @@ class StatsStore {
 
     const connection = {
       db,
+      readStatements: new Map(),
       insert: db.prepare(`
         INSERT INTO translation_stats (
           app,
@@ -378,6 +420,11 @@ class StatsStore {
     };
 
     this.connectionCache.set(dateKey, connection);
+
+    if (!existed) {
+      this.invalidateDateKeysCache();
+    }
+
     return connection;
   }
 
@@ -389,6 +436,33 @@ class StatsStore {
 
     connection.db.close();
     this.connectionCache.delete(dateKey);
+  }
+
+  invalidateDateKeysCache() {
+    this.dateKeysCache = null;
+  }
+
+  scanRows(range, filters, onRow) {
+    const { startTs, endTsExclusive } = getRangeTimestamps(range.from, range.to, this.timeZone);
+    const { whereClause, params, signature } = buildWhereClause(filters, {
+      startTs,
+      endTsExclusive
+    });
+
+    // Scan only the requested day range and one adjacent day on each side.
+    // Older partitioning logic could spill rows into a neighboring file.
+    for (const dateKey of this.listDateKeysForRange(range, 1)) {
+      const filePath = this.getDatabasePath(dateKey);
+      if (!fs.existsSync(filePath)) {
+        continue;
+      }
+
+      const connection = this.getConnection(dateKey);
+      const statement = getReadStatement(connection, signature, whereClause);
+      for (const row of statement.iterate(...params)) {
+        onRow(normalizeReadRow(row));
+      }
+    }
   }
 }
 
@@ -495,22 +569,7 @@ function parseTimestamp(value, fieldName) {
 
 function createDashboardContext(store, input = {}) {
   store.cleanupOldDatabases();
-
-  const range = resolveDateRange({
-    from: input.from,
-    to: input.to,
-    timeZone: store.timeZone,
-    retentionDays: store.retentionDays,
-    now: store.nowProvider()
-  });
-
-  const filters = {
-    app: normalizeOptionalString(input.app),
-    provider: normalizeOptionalString(input.provider),
-    username: normalizeOptionalString(input.username),
-    app_version: normalizeOptionalString(input.app_version),
-    success: parseOptionalSuccess(input.success)
-  };
+  const { range, filters } = resolveDashboardQuery(store, input);
 
   const rows = store.readRows(filters, range);
 
@@ -534,55 +593,66 @@ function isNatApp(app) {
 function buildWhereClause(filters, rangeFilter = {}) {
   const clauses = ['ts >= ?', 'ts < ?'];
   const params = [rangeFilter.startTs, rangeFilter.endTsExclusive];
+  const signatureParts = [];
 
   if (filters.app) {
     clauses.push('app = ?');
     params.push(filters.app);
+    signatureParts.push('app');
   }
 
   if (filters.provider) {
     clauses.push('provider = ?');
     params.push(filters.provider);
+    signatureParts.push('provider');
   }
 
   if (filters.username) {
     clauses.push('username = ?');
     params.push(filters.username);
+    signatureParts.push('username');
   }
 
   if (filters.app_version) {
     clauses.push('app_version = ?');
     params.push(filters.app_version);
+    signatureParts.push('app_version');
   }
 
   if (typeof filters.success === 'boolean') {
     clauses.push('success = ?');
     params.push(filters.success ? 1 : 0);
+    signatureParts.push('success');
   }
 
   return {
+    signature: signatureParts.length === 0 ? 'ts' : `ts:${signatureParts.join(',')}`,
     whereClause: `WHERE ${clauses.join(' AND ')}`,
     params
   };
 }
 
 function buildSummary(rows) {
-  const total = rows.length;
-  const successCount = rows.filter((row) => row.success).length;
-  const failureCount = total - successCount;
-  const totalDuration = rows.reduce((sum, row) => sum + row.duration_ms, 0);
+  const aggregate = createAggregate();
+  const apps = new Set();
+  const providers = new Set();
+  const users = new Set();
+  const versions = new Set();
 
-  return {
-    total,
-    success_count: successCount,
-    failure_count: failureCount,
-    success_rate: total === 0 ? 0 : Number(((successCount / total) * 100).toFixed(2)),
-    avg_duration_ms: total === 0 ? 0 : Number((totalDuration / total).toFixed(2)),
-    unique_apps: new Set(rows.map((row) => row.app)).size,
-    unique_providers: new Set(rows.map((row) => row.provider)).size,
-    unique_users: new Set(rows.map((row) => row.username)).size,
-    unique_versions: new Set(rows.map((row) => row.app_version)).size
-  };
+  for (const row of rows) {
+    updateAggregate(aggregate, row);
+    apps.add(row.app);
+    providers.add(row.provider);
+    users.add(row.username);
+    versions.add(row.app_version);
+  }
+
+  return finalizeSummaryAggregate(aggregate, {
+    apps,
+    providers,
+    users,
+    versions
+  });
 }
 
 function buildDailySeries(rows, range, timeZone) {
@@ -747,14 +817,7 @@ function enumerateHourKeys(from, to) {
 
 function hourKeyFromTimestamp(timestamp, timeZone) {
   const date = new Date(timestamp);
-  const formatter = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    hourCycle: 'h23'
-  });
+  const formatter = getHourFormatter(timeZone);
   const parts = formatter.formatToParts(date);
   const mapped = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${mapped.year}-${mapped.month}-${mapped.day} ${mapped.hour}:00`;
@@ -793,6 +856,164 @@ function finalizeAggregate(aggregate) {
     success_rate: aggregate.total === 0 ? 0 : Number(((aggregate.success_count / aggregate.total) * 100).toFixed(2)),
     avg_duration_ms: aggregate.total === 0 ? 0 : Number((aggregate.duration_total / aggregate.total).toFixed(2))
   };
+}
+
+function resolveDashboardQuery(store, input = {}) {
+  const range = resolveDateRange({
+    from: input.from,
+    to: input.to,
+    timeZone: store.timeZone,
+    retentionDays: store.retentionDays,
+    now: store.nowProvider()
+  });
+
+  return {
+    range,
+    filters: {
+      app: normalizeOptionalString(input.app),
+      provider: normalizeOptionalString(input.provider),
+      username: normalizeOptionalString(input.username),
+      app_version: normalizeOptionalString(input.app_version),
+      success: parseOptionalSuccess(input.success)
+    }
+  };
+}
+
+function getReadStatement(connection, signature, whereClause) {
+  const cacheKey = `read:${signature}`;
+  if (!connection.readStatements.has(cacheKey)) {
+    connection.readStatements.set(cacheKey, connection.db.prepare(`
+      SELECT
+        app,
+        provider,
+        success,
+        duration_ms,
+        ts,
+        app_version,
+        username
+      FROM translation_stats
+      ${whereClause}
+    `));
+  }
+
+  return connection.readStatements.get(cacheKey);
+}
+
+function normalizeReadRow(row) {
+  return {
+    ...row,
+    success: Boolean(row.success)
+  };
+}
+
+function rowMatchesFilters(row, filters) {
+  if (filters.app && row.app !== filters.app) {
+    return false;
+  }
+
+  if (filters.provider && row.provider !== filters.provider) {
+    return false;
+  }
+
+  if (filters.username && row.username !== filters.username) {
+    return false;
+  }
+
+  if (filters.app_version && row.app_version !== filters.app_version) {
+    return false;
+  }
+
+  if (typeof filters.success === 'boolean' && row.success !== filters.success) {
+    return false;
+  }
+
+  return true;
+}
+
+function updateMapAggregate(groups, key, fields, row) {
+  if (!groups.has(key)) {
+    groups.set(key, createAggregate(fields));
+  }
+
+  updateAggregate(groups.get(key), row);
+}
+
+function updateExistingAggregate(series, key, row) {
+  const aggregate = series.get(key);
+  if (aggregate) {
+    updateAggregate(aggregate, row);
+  }
+}
+
+function updateSeriesAggregate(groups, groupKey, templateKeys, pointKey, row) {
+  if (!groups.has(groupKey)) {
+    groups.set(groupKey, createSeriesTemplate(templateKeys));
+  }
+
+  updateExistingAggregate(groups.get(groupKey), pointKey, row);
+}
+
+function finalizeSummaryAggregate(aggregate, uniqueGroups) {
+  const finalized = finalizeAggregate(aggregate);
+
+  return {
+    total: finalized.total,
+    success_count: finalized.success_count,
+    failure_count: finalized.failure_count,
+    success_rate: finalized.success_rate,
+    avg_duration_ms: finalized.avg_duration_ms,
+    unique_apps: uniqueGroups.apps.size,
+    unique_providers: uniqueGroups.providers.size,
+    unique_users: uniqueGroups.users.size,
+    unique_versions: uniqueGroups.versions.size
+  };
+}
+
+function finalizeSeries(series) {
+  return Array.from(series.values()).map(finalizeAggregate);
+}
+
+function finalizeSeriesGroups(groups, outputKeyName) {
+  return Array.from(groups.entries())
+    .map(([groupKey, series]) => {
+      const points = finalizeSeries(series);
+      return {
+        [outputKeyName]: groupKey,
+        label: groupKey,
+        total: points.reduce((sum, point) => sum + point.total, 0),
+        points
+      };
+    })
+    .sort((left, right) => compareAggregateOutputs(left, right, outputKeyName));
+}
+
+function finalizeAggregateGroups(groups, outputKeyName) {
+  return Array.from(groups.values())
+    .map(finalizeAggregate)
+    .sort((left, right) => compareAggregateOutputs(left, right, outputKeyName));
+}
+
+function compareAggregateOutputs(left, right, outputKeyName) {
+  if (right.total !== left.total) {
+    return right.total - left.total;
+  }
+
+  return String(left[outputKeyName]).localeCompare(String(right[outputKeyName]), 'zh-Hans-CN');
+}
+
+function getHourFormatter(timeZone) {
+  if (!hourFormatterCache.has(timeZone)) {
+    hourFormatterCache.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      hourCycle: 'h23'
+    }));
+  }
+
+  return hourFormatterCache.get(timeZone);
 }
 
 function sortValues(values) {

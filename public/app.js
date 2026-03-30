@@ -1,16 +1,8 @@
-const DASHBOARD_ENDPOINTS = {
-  summary: '/api/dashboard-summary',
-  trends: '/api/dashboard-trends',
-  provider: '/api/dashboard-providers',
-  app: '/api/dashboard-apps',
-  nat: '/api/dashboard-nat-providers'
-};
+const DASHBOARD_ENDPOINT = '/api/dashboard-data';
+const DASHBOARD_SECTION_KEYS = ['summary', 'trends', 'provider', 'app', 'nat'];
 
 const state = {
-  options: null,
   dashboard: createDashboardState(),
-  dashboardStatus: createDashboardSectionState('idle'),
-  dashboardErrors: createDashboardSectionState(null),
   activeDashboardRequestId: 0,
   chartSelections: {
     dailyTotal: null,
@@ -42,6 +34,8 @@ const elements = {
   healthText: document.querySelector('#health-text'),
   retentionText: document.querySelector('#retention-text'),
   timezoneText: document.querySelector('#timezone-text'),
+  dataWindowText: document.querySelector('#data-window-text'),
+  dataDaysText: document.querySelector('#data-days-text'),
   loadingOverlay: document.querySelector('#loading-overlay'),
   summaryTotal: document.querySelector('#summary-total'),
   summarySuccessRate: document.querySelector('#summary-success-rate'),
@@ -96,18 +90,20 @@ bootstrap().catch((error) => {
   console.error(error);
   setPageLoading(false);
   setRefreshLoading(false);
-  for (const sectionKey of Object.keys(DASHBOARD_ENDPOINTS)) {
+  for (const sectionKey of DASHBOARD_SECTION_KEYS) {
     renderSectionError(sectionKey, error);
     setSectionLoading(sectionKey, false);
   }
+  elements.healthText.textContent = '检查失败';
+  elements.dataWindowText.textContent = '加载失败';
+  elements.dataDaysText.textContent = '请稍后重试';
 });
 
 async function bootstrap() {
   setPageLoading(true);
 
   try {
-    void loadHealth();
-    await loadOptions();
+    await refreshDashboard({ preserveSelections: true });
   } finally {
     setPageLoading(false);
   }
@@ -115,73 +111,48 @@ async function bootstrap() {
   elements.apply.addEventListener('click', async () => {
     await refreshDashboard({ preserveSelections: true });
   });
-
-  await refreshDashboard({ preserveSelections: true, skipOptions: true });
 }
 
-async function refreshDashboard({ preserveSelections = false, skipOptions = false } = {}) {
-  setRefreshLoading(true);
-
-  try {
-    if (!skipOptions) {
-      await loadOptions({ preserveSelections });
-    }
-    await loadDashboardSections();
-  } finally {
-    setRefreshLoading(false);
-  }
-}
-
-async function loadHealth() {
-  try {
-    const data = await fetchJson('/healthz', { timeoutMs: 5000 });
-    elements.healthText.textContent = data.ok ? '运行中' : '异常';
-    elements.retentionText.textContent = `${data.retention_days} 天`;
-    elements.timezoneText.textContent = data.time_zone;
-  } catch (error) {
-    console.error(error);
-    elements.healthText.textContent = '检查失败';
-  }
-}
-
-async function loadOptions({ preserveSelections = false } = {}) {
-  const previousSelections = preserveSelections ? getSelections() : {};
-  const params = new URLSearchParams();
-
-  if (elements.from.value) {
-    params.set('from', elements.from.value);
-  }
-  if (elements.to.value) {
-    params.set('to', elements.to.value);
-  }
-
-  const data = await fetchJson(`/api/options?${params.toString()}`);
-  state.options = data;
-
-  if (!elements.from.value || !preserveSelections) {
-    elements.from.value = data.range.from;
-  }
-
-  if (!elements.to.value || !preserveSelections) {
-    elements.to.value = data.range.to;
-  }
-
-  fillSelect(elements.app, data.apps, previousSelections.app);
-  fillSelect(elements.provider, data.providers, previousSelections.provider);
-  fillSelect(elements.username, data.usernames, previousSelections.username);
-  fillSelect(elements.appVersion, data.app_versions, previousSelections.app_version);
-  elements.success.value = previousSelections.success || elements.success.value || 'all';
-}
-
-async function loadDashboardSections() {
+async function refreshDashboard({ preserveSelections = false } = {}) {
   const requestId = ++state.activeDashboardRequestId;
   const params = buildDashboardParams();
-  const tasks = Object.entries(DASHBOARD_ENDPOINTS).map(([sectionKey, endpoint]) => {
-    startSectionLoading(sectionKey);
-    return loadDashboardSection(sectionKey, endpoint, params, requestId);
-  });
+  const previousSelections = preserveSelections ? getSelections() : {};
 
-  await Promise.allSettled(tasks);
+  setRefreshLoading(true);
+  startDashboardLoading();
+
+  try {
+    const query = params.toString();
+    const data = await fetchJson(query ? `${DASHBOARD_ENDPOINT}?${query}` : DASHBOARD_ENDPOINT);
+    if (requestId !== state.activeDashboardRequestId) {
+      return;
+    }
+
+    applyDashboardPayload(data, previousSelections);
+    renderDashboardViews();
+    finishDashboardLoading();
+    applyDashboardMeta(data.meta);
+    elements.healthText.textContent = '运行中';
+  } catch (error) {
+    if (requestId !== state.activeDashboardRequestId) {
+      return;
+    }
+
+    console.error(error);
+    finishDashboardLoading();
+    if (!hasDashboardData()) {
+      for (const sectionKey of DASHBOARD_SECTION_KEYS) {
+        renderSectionError(sectionKey, error);
+      }
+      elements.healthText.textContent = '检查失败';
+      elements.dataWindowText.textContent = '加载失败';
+      elements.dataDaysText.textContent = '请稍后重试';
+    }
+  } finally {
+    if (requestId === state.activeDashboardRequestId) {
+      setRefreshLoading(false);
+    }
+  }
 }
 
 function createDashboardState() {
@@ -191,16 +162,6 @@ function createDashboardState() {
     provider: null,
     app: null,
     nat: null
-  };
-}
-
-function createDashboardSectionState(initialValue) {
-  return {
-    summary: initialValue,
-    trends: initialValue,
-    provider: initialValue,
-    app: initialValue,
-    nat: initialValue
   };
 }
 
@@ -217,38 +178,98 @@ function buildDashboardParams() {
   return params;
 }
 
-async function loadDashboardSection(sectionKey, endpoint, params, requestId) {
-  const query = params.toString();
+function startDashboardLoading() {
+  for (const sectionKey of DASHBOARD_SECTION_KEYS) {
+    startSectionLoading(sectionKey);
+  }
+}
 
-  try {
-    const data = await fetchJson(query ? `${endpoint}?${query}` : endpoint);
-    if (requestId !== state.activeDashboardRequestId) {
-      return;
-    }
-
-    state.dashboard[sectionKey] = data;
-    state.dashboardStatus[sectionKey] = 'ready';
-    state.dashboardErrors[sectionKey] = null;
-    renderDashboardViews();
-    setSectionLoading(sectionKey, false);
-  } catch (error) {
-    if (requestId !== state.activeDashboardRequestId) {
-      return;
-    }
-
-    console.error(error);
-    state.dashboardStatus[sectionKey] = 'error';
-    state.dashboardErrors[sectionKey] = error;
-    if (!state.dashboard[sectionKey]) {
-      renderSectionError(sectionKey, error);
-    }
+function finishDashboardLoading() {
+  for (const sectionKey of DASHBOARD_SECTION_KEYS) {
     setSectionLoading(sectionKey, false);
   }
 }
 
+function applyDashboardPayload(data, previousSelections = {}) {
+  if (data.options) {
+    syncFilterControls(data, previousSelections);
+  }
+
+  applyDashboardWindowInfo(data);
+
+  state.dashboard.summary = {
+    range: data.range,
+    filters: data.filters,
+    summary: data.summary
+  };
+  state.dashboard.trends = {
+    range: data.range,
+    filters: data.filters,
+    daily_by_app: data.daily_by_app
+  };
+  state.dashboard.provider = {
+    range: data.range,
+    filters: data.filters,
+    provider_hourly: data.provider_hourly,
+    providers: data.providers
+  };
+  state.dashboard.app = {
+    range: data.range,
+    filters: data.filters,
+    apps: data.apps,
+    users: data.users,
+    versions: data.versions
+  };
+  state.dashboard.nat = {
+    range: data.range,
+    filters: data.filters,
+    nat_providers: data.nat_providers
+  };
+}
+
+function syncFilterControls(data, previousSelections) {
+  if (!elements.from.value || !previousSelections.from) {
+    elements.from.value = data.range.from;
+  }
+
+  if (!elements.to.value || !previousSelections.to) {
+    elements.to.value = data.range.to;
+  }
+
+  fillSelect(elements.app, data.options.apps, previousSelections.app);
+  fillSelect(elements.provider, data.options.providers, previousSelections.provider);
+  fillSelect(elements.username, data.options.usernames, previousSelections.username);
+  fillSelect(elements.appVersion, data.options.app_versions, previousSelections.app_version);
+  elements.success.value = previousSelections.success || elements.success.value || 'all';
+}
+
+function applyDashboardMeta(meta = {}) {
+  if (meta.retention_days !== undefined) {
+    elements.retentionText.textContent = `${meta.retention_days} 天`;
+  }
+
+  if (meta.time_zone) {
+    elements.timezoneText.textContent = meta.time_zone;
+  }
+}
+
+function applyDashboardWindowInfo(data) {
+  const availableDates = Array.isArray(data.options?.available_dates) ? data.options.available_dates : [];
+  elements.dataWindowText.textContent = `${data.range.from} 至 ${data.range.to}`;
+
+  if (availableDates.length === 0) {
+    elements.dataDaysText.textContent = '当前窗口内暂无数据日';
+    return;
+  }
+
+  elements.dataDaysText.textContent = `命中 ${availableDates.length} 个数据日`;
+}
+
+function hasDashboardData() {
+  return DASHBOARD_SECTION_KEYS.some((sectionKey) => Boolean(state.dashboard[sectionKey]));
+}
+
 function startSectionLoading(sectionKey) {
-  state.dashboardStatus[sectionKey] = 'loading';
-  state.dashboardErrors[sectionKey] = null;
   setSectionLoading(sectionKey, true);
 
   if (!state.dashboard[sectionKey]) {
